@@ -33,3 +33,14 @@ cd ~/QuickFile && unzip -o ~/storage/downloads/fix.zip -d . && git add . && git 
 ## Sharing the project safely
 `bash share_zip.sh` (from the project folder in Termux) builds `~/storage/downloads/<folder>-for-AI.zip`
 without keys, env files, build output or APKs, and refuses if it finds anything that looks like a token.
+
+## REQUIRED answer format (the owner has only a phone + Termux)
+1. Briefly say what you changed and why (the owner writes Egyptian Arabic mixed with English terms, reply in the same).
+2. Deliver ONE zip containing only the changed/new files, complete (never snippets), paths relative to the project root.
+   Name it `fixN.zip`. If you cannot create a zip, give each file in full in its own code block with its path, and say so.
+3. Raise `versionCode` (+1) and `versionName` in `app/build.gradle.kts` for functional changes, and include that file.
+4. Give the install command, ready to copy:
+   `cd ~/QuickFile && unzip -o ~/storage/downloads/fixN.zip -d . && git add . && git commit -m "short message" && git push`
+   (GitHub repo: Khereba1/QuickFile, APK: github.com/Khereba1/QuickFile/releases/tag/latest)
+5. Say honestly that nothing was compiled or tested, and what to check first on the phone.
+6. If the build fails, the owner sends lines containing `e: ` from the Actions log; fix only those.
