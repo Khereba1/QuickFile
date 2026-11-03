@@ -1,0 +1,17 @@
+# الأساسيات وواجهة تليجرام
+pyrofork
+TgCrypto
+python-dotenv
+httpx
+
+# معالجة الصور و PDF
+PyMuPDF
+Pillow
+
+# معالجة ملفات Office و HTML
+python-docx
+python-pptx
+beautifulsoup4
+
+# اختياري (لجلب ffmpeg تلقائياً إذا لم يكن مثبتاً على النظام)
+imageio-ffmpeg

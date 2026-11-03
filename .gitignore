@@ -1,0 +1,10 @@
+app/*.jks
+*.jks
+*.keystore
+local.properties
+.gradle/
+build/
+*.iml
+.idea/
+app/src/main/assets/tessdata/*.traineddata
+app/src/main/assets/*.ttf
