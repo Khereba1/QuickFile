@@ -29,3 +29,7 @@ Increase versionCode in app/build.gradle.kts when releasing a meaningful update.
 
 ## Owner workflow
 cd ~/QuickFile && unzip -o ~/storage/downloads/fix.zip -d . && git add . && git commit -m "msg" && git push
+
+## Sharing the project safely
+`bash share_zip.sh` (from the project folder in Termux) builds `~/storage/downloads/<folder>-for-AI.zip`
+without keys, env files, build output or APKs, and refuses if it finds anything that looks like a token.
