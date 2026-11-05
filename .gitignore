@@ -8,3 +8,14 @@ build/
 .idea/
 app/src/main/assets/tessdata/*.traineddata
 app/src/main/assets/*.ttf
+env
+.env
+*.env
+*.session
+*.session-journal
+*.db
+*.apk
+signing-secrets.txt
+*KEY-BACKUP*
+fix*.zip
+*-for-AI.zip

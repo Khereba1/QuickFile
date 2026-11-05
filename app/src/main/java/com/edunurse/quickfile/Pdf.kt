@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
+import android.graphics.Paint
 import android.graphics.pdf.PdfRenderer
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -18,7 +19,11 @@ import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
+import com.tom_roush.pdfbox.pdmodel.encryption.AccessPermission
+import com.tom_roush.pdfbox.pdmodel.encryption.StandardProtectionPolicy
+import com.tom_roush.pdfbox.pdmodel.font.PDType1Font
 import com.tom_roush.pdfbox.pdmodel.graphics.image.JPEGFactory
+import com.tom_roush.pdfbox.pdmodel.graphics.image.LosslessFactory
 import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
 import java.io.File
 import java.io.FileOutputStream
@@ -112,29 +117,196 @@ object Pdf {
         return listOf(out)
     }
 
-    fun split(c: Ctx): List<File> {
+    fun split(c: Ctx, forced: String? = null): List<File> {
         ensure(c.app)
         val f = c.inputs[0]
+        val mode = forced ?: c.s("mode")
+        val spec = c.s("val")
+        val doc = PDDocument.load(f.file)
+        return try {
+            val total = doc.numberOfPages
+            when (mode) {
+                "every" -> {
+                    val n = spec.trim().toIntOrNull()?.takeIf { it > 0 } ?: throw IllegalStateException("اكتب عدد صحيح للصفحات")
+                    val sp = Splitter()
+                    sp.setSplitAtPage(n)
+                    val parts = sp.split(doc)
+                    parts.mapIndexed { i, p ->
+                        c.progress(i.toFloat() / parts.size, "حفظ الجزء ${i + 1} من ${parts.size}")
+                        val o = c.out("${f.base}_part${i + 1}.pdf")
+                        p.save(o); p.close(); o
+                    }
+                }
+                "ranges" -> {
+                    val groups = spec.split(",", "،").map { it.trim() }.filter { it.isNotEmpty() }
+                    if (groups.isEmpty()) throw IllegalStateException("اكتب المجموعات، مثال: 1-3,4-6,7")
+                    groups.mapIndexed { gi, g ->
+                        c.progress(gi.toFloat() / groups.size, "جزء ${gi + 1} من ${groups.size}")
+                        val keep = ranges(g, total).toSet()
+                        val d = PDDocument.load(f.file)
+                        try {
+                            for (i in total - 1 downTo 0) if ((i + 1) !in keep) d.removePage(i)
+                            val o = c.out("${f.base}_${g.replace(Regex("[^0-9-]"), "")}.pdf")
+                            d.save(o)
+                            o
+                        } finally { d.close() }
+                    }
+                }
+                else -> {
+                    if (mode == "delete" && spec.isBlank()) throw IllegalStateException("اكتب أرقام الصفحات اللي عايز تحذفها")
+                    val sel = ranges(spec, total).toSet()
+                    val keep = if (mode == "delete") (1..total).filter { it !in sel }.toSet() else sel
+                    if (keep.isEmpty()) throw IllegalStateException("مينفعش تحذف كل الصفحات")
+                    for (i in total - 1 downTo 0) if ((i + 1) !in keep) doc.removePage(i)
+                    val o = c.out("${f.base}_${if (mode == "delete") "edited" else "pages"}.pdf")
+                    doc.save(o)
+                    listOf(o)
+                }
+            }
+        } finally { doc.close() }
+    }
+
+    fun rotate(c: Ctx): List<File> = c.inputs.mapIndexed { fi, f ->
+        ensure(c.app)
+        c.progress(fi.toFloat() / c.inputs.size, "تدوير ${f.name}")
+        val angle = c.s("angle").toIntOrNull() ?: 90
+        val doc = PDDocument.load(f.file)
+        try {
+            for (pg in ranges(c.s("pages"), doc.numberOfPages)) {
+                val page = doc.getPage(pg - 1)
+                page.rotation = ((page.rotation + angle) % 360 + 360) % 360
+            }
+            val o = c.out("${f.base}_rotated.pdf")
+            doc.save(o)
+            o
+        } finally { doc.close() }
+    }
+
+    fun numbers(c: Ctx): List<File> = c.inputs.mapIndexed { fi, f ->
+        ensure(c.app)
+        val start = c.s("start").trim().toIntOrNull() ?: 1
+        val pos = c.s("pos")
+        val withTotal = c.on("total")
+        val font = PDType1Font.HELVETICA
         val doc = PDDocument.load(f.file)
         try {
             val total = doc.numberOfPages
-            if (c.s("mode") == "every") {
-                val n = c.s("val").trim().toIntOrNull()?.takeIf { it > 0 } ?: throw IllegalStateException("اكتب عدد صحيح للصفحات")
-                val sp = Splitter()
-                sp.setSplitAtPage(n)
-                val parts = sp.split(doc)
-                return parts.mapIndexed { i, p ->
-                    c.progress(i.toFloat() / parts.size, "حفظ الجزء ${i + 1} من ${parts.size}")
-                    val o = c.out("${f.base}_part${i + 1}.pdf")
-                    p.save(o); p.close(); o
+            for ((n, page) in doc.pages.withIndex()) {
+                c.progress((fi + n.toFloat() / total) / c.inputs.size, "ترقيم ${f.name}")
+                val label = if (withTotal) "${n + start} / ${total + start - 1}" else "${n + start}"
+                val box = page.mediaBox
+                val w = font.getStringWidth(label) / 1000f * 10f
+                val x = when (pos) {
+                    "l" -> box.lowerLeftX + 28f
+                    "r" -> box.upperRightX - 28f - w
+                    else -> (box.lowerLeftX + box.upperRightX) / 2f - w / 2f
+                }
+                PDPageContentStream(doc, page, PDPageContentStream.AppendMode.APPEND, true, true).use { cs ->
+                    cs.beginText()
+                    cs.setFont(font, 10f)
+                    cs.newLineAtOffset(x, box.lowerLeftY + 20f)
+                    cs.showText(label)
+                    cs.endText()
                 }
             }
-            val keep = ranges(c.s("val"), total).toSet()
-            for (i in total - 1 downTo 0) if ((i + 1) !in keep) doc.removePage(i)
-            val o = c.out("${f.base}_pages.pdf")
+            val o = c.out("${f.base}_numbered.pdf")
             doc.save(o)
-            return listOf(o)
+            o
         } finally { doc.close() }
+    }
+
+    fun watermark(c: Ctx): List<File> = c.inputs.mapIndexed { fi, f ->
+        ensure(c.app)
+        val text = c.s("text").trim()
+        if (text.isEmpty()) throw IllegalStateException("اكتب نص العلامة المائية")
+        val alpha = when (c.s("op")) { "light" -> 55; "strong" -> 150; else -> 95 }
+        val doc = PDDocument.load(f.file)
+        try {
+            val cache = HashMap<String, com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject>()
+            val total = doc.numberOfPages
+            for ((n, page) in doc.pages.withIndex()) {
+                c.progress((fi + n.toFloat() / total) / c.inputs.size, "علامة مائية ${f.name}")
+                val box = page.mediaBox
+                val w = box.width
+                val h = box.height
+                val img = cache.getOrPut("${w.toInt()}x${h.toInt()}") {
+                    val bw = 900
+                    val bh = (bw * h / w).toInt().coerceAtLeast(100)
+                    val bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
+                    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.argb(alpha, 110, 110, 110)
+                        textAlign = Paint.Align.CENTER
+                        textSize = 100f
+                    }
+                    val diag = Math.hypot(bw.toDouble(), bh.toDouble()).toFloat()
+                    val tw = paint.measureText(text).coerceAtLeast(1f)
+                    paint.textSize = (100f * 0.78f * diag / tw).coerceAtMost(bw / 5f)
+                    val cv = Canvas(bmp)
+                    cv.rotate(-45f, bw / 2f, bh / 2f)
+                    cv.drawText(text, bw / 2f, bh / 2f + paint.textSize / 3f, paint)
+                    LosslessFactory.createFromImage(doc, bmp)
+                }
+                PDPageContentStream(doc, page, PDPageContentStream.AppendMode.APPEND, true, true).use {
+                    it.drawImage(img, box.lowerLeftX, box.lowerLeftY, w, h)
+                }
+            }
+            val o = c.out("${f.base}_watermark.pdf")
+            doc.save(o)
+            o
+        } finally { doc.close() }
+    }
+
+    fun protect(c: Ctx): List<File> = c.inputs.mapIndexed { fi, f ->
+        ensure(c.app)
+        val pw = c.s("pw")
+        if (pw.isBlank()) throw IllegalStateException("اكتب الباسورد")
+        c.progress(fi.toFloat() / c.inputs.size, "حماية ${f.name}")
+        val doc = PDDocument.load(f.file)
+        try {
+            val ap = AccessPermission()
+            ap.setCanModify(false)
+            if (c.on("nocopy")) ap.setCanExtractContent(false)
+            val policy = StandardProtectionPolicy(pw, pw, ap)
+            policy.setEncryptionKeyLength(128)
+            doc.protect(policy)
+            val o = c.out("${f.base}_protected.pdf")
+            doc.save(o)
+            o
+        } finally { doc.close() }
+    }
+
+    fun organize(c: Ctx, items: List<OPage>): List<File> {
+        ensure(c.app)
+        if (items.isEmpty()) throw IllegalStateException("مفيش صفحات للحفظ")
+        val out = PDDocument()
+        val srcs = HashMap<String, PDDocument>()
+        try {
+            items.forEachIndexed { n, it ->
+                c.progress(n.toFloat() / items.size, "صفحة ${n + 1} من ${items.size}")
+                val rot = ((it.rot % 360) + 360) % 360
+                if (it.isImg) {
+                    val bmp = Img.flatten(Img.decode(it.src, 2600))
+                    val W = 595f
+                    val H = W * bmp.height / bmp.width
+                    val page = PDPage(PDRectangle(W, H))
+                    out.addPage(page)
+                    val img = JPEGFactory.createFromImage(out, bmp, 0.8f)
+                    PDPageContentStream(out, page).use { cs -> cs.drawImage(img, 0f, 0f, W, H) }
+                    page.rotation = rot
+                    bmp.recycle()
+                } else {
+                    val sd = srcs.getOrPut(it.src.path) { PDDocument.load(it.src) }
+                    val pg = out.importPage(sd.getPage(it.idx))
+                    pg.rotation = ((pg.rotation + rot) % 360 + 360) % 360
+                }
+            }
+            val o = c.out("organized.pdf")
+            out.save(o)
+            return listOf(o)
+        } finally {
+            out.close()
+            srcs.values.forEach { d -> d.close() }
+        }
     }
 
     fun unlock(c: Ctx): List<File> = c.inputs.mapIndexed { i, f ->

@@ -12,7 +12,9 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.File
 
-data class Picked(val uri: Uri, val name: String, val size: Long)
+data class Picked(val uri: Uri, val name: String, val size: Long, val mime: String? = null) {
+    val kind: String get() = kindOf(name, mime)
+}
 
 sealed interface JobState {
     data object Idle : JobState
@@ -42,6 +44,19 @@ object Fs {
         ctx.contentResolver.openInputStream(uri)!!.use { i -> f.outputStream().use { o -> i.copyTo(o) } }
         return f
     }
+
+    fun pick(ctx: Context, uri: Uri): Picked {
+        val (n, s) = info(ctx, uri)
+        val mime = ctx.contentResolver.getType(uri)
+        var name = n
+        if ('.' !in name) {
+            MimeTypeMap.getSingleton().getExtensionFromMimeType(mime)?.let { name = "$name.$it" }
+        }
+        return Picked(uri, name, s, mime)
+    }
+
+    fun copyToCache(ctx: Context, uri: Uri, name: String, sub: String): File =
+        copyIn(ctx, uri, File(ctx.cacheDir, "$sub/${System.nanoTime()}"), name)
 
     fun mime(f: File): String =
         MimeTypeMap.getSingleton().getMimeTypeFromExtension(f.extension.lowercase()) ?: "application/octet-stream"
@@ -126,6 +141,7 @@ object Jobs {
     }
 
     fun cleanup(ctx: Context) {
+        listOf("org", "view").forEach { File(ctx.cacheDir, it).deleteRecursively() }
         File(ctx.filesDir, "out").listFiles()?.forEach {
             if (System.currentTimeMillis() - it.lastModified() > 3 * 86400000L) it.deleteRecursively()
         }

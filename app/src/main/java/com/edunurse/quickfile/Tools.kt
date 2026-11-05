@@ -53,8 +53,30 @@ class Tool(
     val minFiles: Int = 1,
     val ordered: Boolean = false,
     val opts: List<Opt> = emptyList(),
-    val exec: suspend (Ctx) -> List<File>
+    val special: String? = null,
+    val exec: suspend (Ctx) -> List<File> = { emptyList() }
 )
+
+fun kindOf(name: String, mime: String?): String {
+    val ext = name.substringAfterLast('.', "").lowercase()
+    return when {
+        ext == "pdf" || mime == "application/pdf" -> "pdf"
+        ext in setOf("jpg", "jpeg", "png", "webp", "bmp", "gif", "heic") || mime?.startsWith("image/") == true -> "image"
+        ext in setOf("mp4", "mkv", "webm", "mov", "avi", "3gp", "m4v", "ts") || mime?.startsWith("video/") == true -> "video"
+        ext in setOf("mp3", "m4a", "aac", "wav", "ogg", "opus", "flac", "amr", "wma", "oga") || mime?.startsWith("audio/") == true -> "audio"
+        else -> "other"
+    }
+}
+
+fun Tool.accepts(kind: String): Boolean = mimes.any {
+    when (it) {
+        "application/pdf" -> kind == "pdf"
+        "image/*" -> kind == "image"
+        "video/*" -> kind == "video"
+        "audio/*" -> kind == "audio"
+        else -> false
+    }
+}
 
 private val VID = arrayOf("video/*")
 private val AUD = arrayOf("audio/*")
@@ -97,21 +119,53 @@ val TOOLS: List<Tool> = listOf(
         Opt.Choice("q", "الجودة", AQ, "mid")
     ), exec = { Media.toAudio(it) }),
 
+    Tool("porganize", "تنظيم الصفحات", "شوف كل الصفحات، رتّب، احذف، دوّر، وضيف صور أو ملفات", "🧩", Group.PDF, PDFM, false, special = "organize"),
+
+    Tool("pview", "معاينة PDF", "قارئ خفيف مع أدوات على الملف", "👁️", Group.PDF, PDFM, false, special = "viewer"),
+
     Tool("pmerge", "دمج PDF", "اجمع أكتر من ملف في ملف واحد", "📚", Group.PDF, PDFM, true, minFiles = 2, ordered = true,
         exec = { Pdf.merge(it) }),
 
-    Tool("psplit", "تقسيم واستخراج صفحات", "خد صفحات معينة أو قسّم الملف", "✂️", Group.PDF, PDFM, false, opts = listOf(
-        Opt.Choice("mode", "الطريقة", listOf("extract" to "استخراج صفحات", "every" to "تقسيم كل N صفحة"), "extract"),
-        Opt.Text("val", "الصفحات أو N", "مثال: 1-3,7,10-12  أو  5", "1")
+    Tool("psplit", "تقسيم واستخراج", "قسّم الملف أو خد صفحات أو احذف صفحات", "✂️", Group.PDF, PDFM, false, opts = listOf(
+        Opt.Choice("mode", "الطريقة", listOf(
+            "extract" to "استخراج صفحات", "delete" to "حذف صفحات",
+            "ranges" to "ملفات حسب مجموعات", "every" to "تقسيم كل N صفحة"
+        ), "extract"),
+        Opt.Text("val", "الصفحات أو N", "مثال: 1-3,7,10-12  |  مجموعات: 1-3,4-6  |  N: 5", "1")
     ), exec = { Pdf.split(it) }),
 
-    Tool("punlock", "فك حماية PDF", "شيل الباسورد أو قيود التعديل", "🔓", Group.PDF, PDFM, true, opts = listOf(
-        Opt.Text("pw", "الباسورد (لو موجود)", "اتركه فاضي لو مفيش")
-    ), exec = { Pdf.unlock(it) }),
+    Tool("premove", "حذف صفحات", "شيل الصفحات اللي مش عايزها", "🗑️", Group.PDF, PDFM, false, opts = listOf(
+        Opt.Text("val", "الصفحات اللي هتتحذف", "مثال: 2,5-7", "")
+    ), exec = { Pdf.split(it, "delete") }),
 
     Tool("pcompress", "ضغط PDF", "صغّر حجم الملفات الممسوحة", "🗜️", Group.PDF, PDFM, true, opts = listOf(
         Opt.Choice("level", "مستوى الضغط", listOf("light" to "خفيف", "mid" to "متوسط", "strong" to "قوي"), "mid")
     ), exec = { Pdf.compress(it) }),
+
+    Tool("protate", "تدوير الصفحات", "لف كل الصفحات أو صفحات معينة", "🔄", Group.PDF, PDFM, true, opts = listOf(
+        Opt.Choice("angle", "الزاوية", listOf("90" to "90° يمين", "180" to "180°", "270" to "90° شمال"), "90"),
+        Opt.Text("pages", "الصفحات (فاضي = الكل)", "مثال: 1-3,7")
+    ), exec = { Pdf.rotate(it) }),
+
+    Tool("pnum", "ترقيم الصفحات", "ضيف رقم الصفحة أسفل كل صفحة", "🔢", Group.PDF, PDFM, true, opts = listOf(
+        Opt.Choice("pos", "المكان", listOf("l" to "يسار", "c" to "منتصف", "r" to "يمين"), "c"),
+        Opt.Text("start", "يبدأ من رقم", "1", "1", numeric = true),
+        Opt.Toggle("total", "اكتب «رقم / الإجمالي»", false)
+    ), exec = { Pdf.numbers(it) }),
+
+    Tool("pwm", "علامة مائية", "اكتب نص شفاف على كل الصفحات", "💧", Group.PDF, PDFM, true, opts = listOf(
+        Opt.Text("text", "نص العلامة", "مثال: EDUNurse", "EDUNurse"),
+        Opt.Choice("op", "الوضوح", listOf("light" to "خفيف", "mid" to "متوسط", "strong" to "واضح"), "mid")
+    ), exec = { Pdf.watermark(it) }),
+
+    Tool("pprotect", "حماية PDF بباسورد", "اقفل الملف بباسورد", "🔐", Group.PDF, PDFM, true, opts = listOf(
+        Opt.Text("pw", "الباسورد", "اكتب باسورد قوي"),
+        Opt.Toggle("nocopy", "امنع نسخ النص", false)
+    ), exec = { Pdf.protect(it) }),
+
+    Tool("punlock", "فك حماية PDF", "شيل الباسورد أو قيود التعديل", "🔓", Group.PDF, PDFM, true, opts = listOf(
+        Opt.Text("pw", "الباسورد (لو موجود)", "اتركه فاضي لو مفيش")
+    ), exec = { Pdf.unlock(it) }),
 
     Tool("pimages", "PDF إلى صور", "كل صفحة صورة", "🖼️", Group.PDF, PDFM, false, opts = listOf(
         Opt.Choice("dpi", "الدقة", listOf("100" to "100", "150" to "150", "220" to "220"), "150"),
