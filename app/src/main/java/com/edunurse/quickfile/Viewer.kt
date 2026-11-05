@@ -104,12 +104,13 @@ fun ViewerScreen(p: Picked, onBack: () -> Unit, onTools: (Picked) -> Unit) {
                 err != null -> Text(err!!, Modifier.align(Alignment.Center).padding(24.dp), color = MaterialTheme.colorScheme.error)
                 d == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                 else -> BoxWithConstraints(Modifier.fillMaxSize()) {
-                    val basePx = with(LocalDensity.current) { maxWidth.roundToPx() }
+                    val maxW = maxWidth
+                    val basePx = with(LocalDensity.current) { maxW.roundToPx() }
                     val widthPx = (basePx * zoom).toInt().coerceAtMost(2400)
                     val aspect = remember(d) { try { d.aspect() } catch (_: Throwable) { 1.41f } }
                     Box(Modifier.fillMaxSize().horizontalScroll(rememberScrollState())) {
                         LazyColumn(
-                            Modifier.width(maxWidth * zoom),
+                            Modifier.width(maxW * zoom),
                             state = listState,
                             contentPadding = PaddingValues(8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
