@@ -6,6 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -155,7 +156,7 @@ fun OrganizerScreen(initial: Picked?, onBack: () -> Unit) {
                     items(pages, key = { it.id }) { p ->
                         val n = pages.indexOf(p) + 1
                         val selected = p.id in sel
-                        Thumb(p, docs[p.src.path], n, selected, Modifier.animateItem()) {
+                        Thumb(p, docs[p.src.path], n, selected, if (Prefs.motion == 2) Modifier.animateItem() else Modifier) {
                             if (selected) sel.remove(p.id) else sel.add(p.id)
                         }
                     }
@@ -176,8 +177,8 @@ fun OrganizerScreen(initial: Picked?, onBack: () -> Unit) {
                     Act("${sel.size} محدد ✕") { sel.clear() }
                     Act("الكل") { sel.clear(); sel.addAll(pages.map { it.id }) }
                     Act("⏫ للأول") { moveEdge(true) }
-                    Act("◀ تقديم") { move(-1) }
-                    Act("تأخير ▶") { move(1) }
+                    Act("تقديم") { move(-1) }
+                    Act("تأخير") { move(1) }
                     Act("⏬ للآخر") { moveEdge(false) }
                     Act("🔄 تدوير") {
                         for (i in pages.indices) if (pages[i].id in sel) pages[i] = pages[i].copy(rot = pages[i].rot + 90)
@@ -212,7 +213,7 @@ private fun Thumb(p: OPage, doc: PdfDoc?, n: Int, selected: Boolean, modifier: M
             try { if (p.isImg) Img.decode(p.src, 420) else doc?.render(p.idx, 320) } catch (_: Throwable) { null }
         }
     }
-    val rot by animateFloatAsState(p.rot.toFloat(), tween(300), label = "rot")
+    val rot by animateFloatAsState(p.rot.toFloat(), if (Prefs.motion == 0) snap() else tween(200), label = "rot")
     val shape = RoundedCornerShape(10.dp)
     val bd = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
     Box(

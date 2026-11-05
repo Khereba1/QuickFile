@@ -107,7 +107,7 @@ object Ocr {
                         addPage(doc, api, bmp, dpi, ar, text)
                         bmp.recycle()
                         done++
-                        c.progress(done.toFloat() / total, "OCR: صفحة $done من $total")
+                        c.progress(done.toFloat() / total, "OCR: صفحة $done/$total")
                     }
                     if (f.ext == "pdf") {
                         val pfd = ParcelFileDescriptor.open(f.file, ParcelFileDescriptor.MODE_READ_ONLY)

@@ -85,7 +85,7 @@ object Pdf {
                 for (i in a..b) if (i in 1..total) set.add(i)
             } else p.toIntOrNull()?.let { if (it in 1..total) set.add(it) }
         }
-        if (set.isEmpty()) throw IllegalStateException("أرقام الصفحات مش صحيحة (الملف فيه $total صفحة)")
+        if (set.isEmpty()) throw IllegalStateException("أرقام الصفحات مش صحيحة (1-$total)")
         return set.toList()
     }
 
@@ -132,7 +132,7 @@ object Pdf {
                     sp.setSplitAtPage(n)
                     val parts = sp.split(doc)
                     parts.mapIndexed { i, p ->
-                        c.progress(i.toFloat() / parts.size, "حفظ الجزء ${i + 1} من ${parts.size}")
+                        c.progress(i.toFloat() / parts.size, "حفظ الجزء ${i + 1}/${parts.size}")
                         val o = c.out("${f.base}_part${i + 1}.pdf")
                         p.save(o); p.close(); o
                     }
@@ -141,7 +141,7 @@ object Pdf {
                     val groups = spec.split(",", "،").map { it.trim() }.filter { it.isNotEmpty() }
                     if (groups.isEmpty()) throw IllegalStateException("اكتب المجموعات، مثال: 1-3,4-6,7")
                     groups.mapIndexed { gi, g ->
-                        c.progress(gi.toFloat() / groups.size, "جزء ${gi + 1} من ${groups.size}")
+                        c.progress(gi.toFloat() / groups.size, "جزء ${gi + 1}/${groups.size}")
                         val keep = ranges(g, total).toSet()
                         val d = PDDocument.load(f.file)
                         try {
@@ -282,7 +282,7 @@ object Pdf {
         val srcs = HashMap<String, PDDocument>()
         try {
             items.forEachIndexed { n, it ->
-                c.progress(n.toFloat() / items.size, "صفحة ${n + 1} من ${items.size}")
+                c.progress(n.toFloat() / items.size, "صفحة ${n + 1}/${items.size}")
                 val rot = ((it.rot % 360) + 360) % 360
                 if (it.isImg) {
                     val bmp = Img.flatten(Img.decode(it.src, 2600))
@@ -387,7 +387,7 @@ object Pdf {
         val doc = PDDocument()
         try {
             c.inputs.forEachIndexed { i, f ->
-                c.progress(i.toFloat() / c.inputs.size, "صورة ${i + 1} من ${c.inputs.size}")
+                c.progress(i.toFloat() / c.inputs.size, "صورة ${i + 1}/${c.inputs.size}")
                 val bmp = Img.flatten(Img.decode(f.file, 2600))
                 val pw = 595f
                 val W = pw
@@ -409,7 +409,7 @@ object Pdf {
 
     @Suppress("DEPRECATION")
     fun convertImages(c: Ctx): List<File> = c.inputs.mapIndexed { i, f ->
-        c.progress(i.toFloat() / c.inputs.size, "صورة ${i + 1} من ${c.inputs.size}")
+        c.progress(i.toFloat() / c.inputs.size, "صورة ${i + 1}/${c.inputs.size}")
         val max = c.s("max").toIntOrNull() ?: 0
         val q = c.s("q").toIntOrNull() ?: 75
         val fmt = c.s("fmt")

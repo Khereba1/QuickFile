@@ -13,6 +13,7 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
@@ -40,6 +41,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
@@ -52,11 +54,14 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -82,28 +87,54 @@ private val LightColors = lightColorScheme(
     outline = Color(0xFFD5DBD6), outlineVariant = Color(0xFFD5DBD6), error = Color(0xFFB3261E)
 )
 
+private val MonoTypography: Typography = Typography().let { t ->
+    val m = FontFamily.Monospace
+    Typography(
+        displayLarge = t.displayLarge.copy(fontFamily = m), displayMedium = t.displayMedium.copy(fontFamily = m),
+        displaySmall = t.displaySmall.copy(fontFamily = m), headlineLarge = t.headlineLarge.copy(fontFamily = m),
+        headlineMedium = t.headlineMedium.copy(fontFamily = m), headlineSmall = t.headlineSmall.copy(fontFamily = m),
+        titleLarge = t.titleLarge.copy(fontFamily = m), titleMedium = t.titleMedium.copy(fontFamily = m),
+        titleSmall = t.titleSmall.copy(fontFamily = m), bodyLarge = t.bodyLarge.copy(fontFamily = m),
+        bodyMedium = t.bodyMedium.copy(fontFamily = m), bodySmall = t.bodySmall.copy(fontFamily = m),
+        labelLarge = t.labelLarge.copy(fontFamily = m), labelMedium = t.labelMedium.copy(fontFamily = m),
+        labelSmall = t.labelSmall.copy(fontFamily = m)
+    )
+}
+
 @Composable
 fun AppTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors) {
-        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background, content = content)
+    val dir = if (Prefs.lang == "ar") LayoutDirection.Rtl else LayoutDirection.Ltr
+    val d = LocalDensity.current
+    MaterialTheme(
+        colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors,
+        typography = if (Prefs.mono) MonoTypography else Typography()
+    ) {
+        ProvideTextStyle(MaterialTheme.typography.bodyLarge) {
+            CompositionLocalProvider(
+                LocalLayoutDirection provides dir,
+                LocalDensity provides Density(d.density, Prefs.textScale)
+            ) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background, content = content)
+            }
         }
     }
 }
 
-// ───────────────────────── حركات مشتركة ─────────────────────────
+// ───────────────────────── حركات (بتحترم إعداد «الحركات») ─────────────────────────
 
-/** ضغطة بترتد (زي الزرار الحي) */
+/** ضغطة بترتد؛ في الوضع الخفيف/بدون = ضغطة عادية */
 fun Modifier.bounceClick(onClick: () -> Unit): Modifier = composed {
+    if (Prefs.motion < 2) return@composed this.clickable(onClick = onClick)
     val src = remember { MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
     val s by animateFloatAsState(if (pressed) 0.95f else 1f, spring(dampingRatio = 0.55f, stiffness = 500f), label = "press")
     this.graphicsLayer { scaleX = s; scaleY = s }.clickable(interactionSource = src, indication = null, onClick = onClick)
 }
 
-/** ظهور متدرّج: شفافية + طلوع لفوق */
+/** ظهور متدرّج (الوضع الكامل بس) */
 @Composable
 fun Modifier.enter(i: Int): Modifier {
+    if (Prefs.motion < 2) return this
     var shown by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { delay(45L * i.coerceAtMost(8)); shown = true }
     val a by animateFloatAsState(if (shown) 1f else 0f, tween(380), label = "ea")
@@ -113,29 +144,32 @@ fun Modifier.enter(i: Int): Modifier {
 
 @Composable
 private fun Pop(content: @Composable () -> Unit) {
+    if (Prefs.motion == 0) { content(); return }
     val st = remember { MutableTransitionState(false).apply { targetState = true } }
     AnimatedVisibility(
         visibleState = st,
-        enter = fadeIn(tween(250)) + slideInVertically(tween(300)) { it / 6 } + expandVertically()
+        enter = if (Prefs.motion == 2) fadeIn(tween(250)) + slideInVertically(tween(300)) { it / 6 } + expandVertically() else fadeIn(tween(120))
     ) { content() }
 }
 
 @Composable
-fun TopBar(title: String, emoji: String?, color: Color?, onBack: () -> Unit, actions: @Composable RowScope.() -> Unit = {}) {
+fun TopBar(title: String, emoji: String?, color: Color?, onBack: () -> Unit, raw: Boolean = false, actions: @Composable RowScope.() -> Unit = {}) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع") }
+        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "back") }
         if (emoji != null) {
             Box(
                 Modifier.size(34.dp).clip(RoundedCornerShape(10.dp))
                     .background((color ?: MaterialTheme.colorScheme.primary).copy(alpha = 0.18f)),
                 contentAlignment = Alignment.Center
-            ) { Text(emoji, fontSize = 17.sp) }
+            ) { Text(emoji, fontSize = 17.sp, raw = true) }
             Spacer(Modifier.width(10.dp))
         }
-        Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f), raw = raw)
         actions()
     }
 }
+
+fun kindEmoji(k: String) = when (k) { "pdf" -> "📄"; "image" -> "🖼️"; "video" -> "🎞️"; "audio" -> "🎵"; "exe" -> "📖"; else -> "📁" }
 
 // ───────────────────────── الرئيسية ─────────────────────────
 
@@ -143,21 +177,24 @@ fun TopBar(title: String, emoji: String?, color: Color?, onBack: () -> Unit, act
 fun Home(onOpen: (Tool) -> Unit) {
     var q by remember { mutableStateOf("") }
     var cat by remember { mutableStateOf<Group?>(null) }
+    var settings by remember { mutableStateOf(false) }
     val filtered = TOOLS.filter {
-        (cat == null || it.group == cat) && (q.isBlank() || it.title.contains(q, true) || it.sub.contains(q, true))
+        (cat == null || it.group == cat) &&
+            (q.isBlank() || tr(it.title).contains(q, true) || tr(it.sub).contains(q, true) || it.title.contains(q, true))
     }
+    if (settings) SettingsDialog { settings = false }
     LazyColumn(
         Modifier.fillMaxSize().statusBarsPadding(),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        item { Banner() }
+        item { Banner { settings = true } }
         item {
             OutlinedTextField(
                 value = q, onValueChange = { q = it }, singleLine = true, shape = RoundedCornerShape(18.dp),
                 placeholder = { Text("ابحث عن أداة…") },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                trailingIcon = { if (q.isNotEmpty()) IconButton(onClick = { q = "" }) { Icon(Icons.Default.Close, contentDescription = "مسح") } },
+                trailingIcon = { if (q.isNotEmpty()) IconButton(onClick = { q = "" }) { Icon(Icons.Default.Close, contentDescription = "clear") } },
                 modifier = Modifier.fillMaxWidth().enter(1)
             )
         }
@@ -172,15 +209,17 @@ fun Home(onOpen: (Tool) -> Unit) {
             val ts = filtered.filter { it.group == g }
             if (ts.isEmpty()) continue
             item(key = "h_" + g.name) {
-                Row(Modifier.padding(top = 10.dp).animateItem(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val ai = if (Prefs.motion == 2) Modifier.animateItem() else Modifier
+                Row(Modifier.padding(top = 10.dp).then(ai), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Box(Modifier.size(10.dp).clip(CircleShape).background(Color(g.color)))
-                    Text(g.title, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    Text(if (Prefs.mono) "// " + tr(g.title).uppercase() else g.title, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                 }
             }
             for (row in ts.chunked(2)) {
                 val o = order++
                 item(key = "r_" + row.first().id) {
-                    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).animateItem().enter(o), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    val ai = if (Prefs.motion == 2) Modifier.animateItem() else Modifier
+                    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).then(ai).enter(o), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         row.forEach { t -> ToolCard(t, Modifier.weight(1f).fillMaxHeight()) { onOpen(t) } }
                         if (row.size == 1) Spacer(Modifier.weight(1f))
                     }
@@ -206,7 +245,7 @@ private fun CatChip(label: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun Banner() {
+private fun Banner(onSettings: () -> Unit) {
     val p = MaterialTheme.colorScheme.primary
     Box(
         Modifier.fillMaxWidth().padding(top = 8.dp).clip(RoundedCornerShape(28.dp))
@@ -216,8 +255,9 @@ private fun Banner() {
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
-                "QuickFile",
-                style = TextStyle(brush = Brush.linearGradient(listOf(p, MaterialTheme.colorScheme.onSurface)), fontSize = 38.sp, fontWeight = FontWeight.ExtraBold)
+                if (Prefs.mono) "> QuickFile_" else "QuickFile",
+                style = TextStyle(brush = Brush.linearGradient(listOf(p, MaterialTheme.colorScheme.onSurface)), fontSize = 36.sp, fontWeight = FontWeight.ExtraBold),
+                raw = true
             )
             Text("ملفاتك. على جهازك. من غير نت.", fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(4.dp))
@@ -228,6 +268,47 @@ private fun Banner() {
                 )
             }
         }
+        IconButton(onClick = onSettings, modifier = Modifier.align(Alignment.TopEnd).offset(x = 8.dp, y = (-8).dp)) {
+            Icon(Icons.Default.Settings, contentDescription = "settings")
+        }
+    }
+}
+
+@Composable
+private fun SettingsDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = { Prefs.save(); onDismiss() },
+        confirmButton = { TextButton(onClick = { Prefs.save(); onDismiss() }) { Text("تمام") } },
+        title = { Text("الإعدادات") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                SetGroup("اللغة") {
+                    CatChip("العربية", Prefs.lang == "ar") { Prefs.setLanguage("ar") }
+                    CatChip("English", Prefs.lang == "en") { Prefs.setLanguage("en") }
+                }
+                SetGroup("الحركات") {
+                    CatChip("بدون", Prefs.motion == 0) { Prefs.motion = 0; Prefs.save() }
+                    CatChip("خفيفة", Prefs.motion == 1) { Prefs.motion = 1; Prefs.save() }
+                    CatChip("كاملة", Prefs.motion == 2) { Prefs.motion = 2; Prefs.save() }
+                }
+                SetGroup("حجم الخط") {
+                    CatChip("صغير", Prefs.textScale < 0.95f) { Prefs.textScale = 0.88f; Prefs.save() }
+                    CatChip("عادي", Prefs.textScale >= 0.95f) { Prefs.textScale = 1f; Prefs.save() }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("خط Mono مزخرف", fontSize = 14.sp, modifier = Modifier.weight(1f))
+                    Switch(checked = Prefs.mono, onCheckedChange = { Prefs.mono = it; Prefs.save() })
+                }
+            }
+        }
+    )
+}
+
+@Composable
+private fun SetGroup(title: String, chips: @Composable () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { chips() }
     }
 }
 
@@ -243,7 +324,7 @@ private fun ToolCard(t: Tool, modifier: Modifier, onClick: () -> Unit) {
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Box(Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(gc.copy(alpha = 0.22f)), contentAlignment = Alignment.Center) {
-                Text(t.emoji, fontSize = 22.sp)
+                Text(t.emoji, fontSize = 22.sp, raw = true)
             }
             Spacer(Modifier.height(6.dp))
             Text(t.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -257,13 +338,12 @@ private fun ToolCard(t: Tool, modifier: Modifier, onClick: () -> Unit) {
 
 // ───────────────────────── اختيار الأداة لملف وارد ─────────────────────────
 
-private fun kindEmoji(k: String) = when (k) { "pdf" -> "📄"; "image" -> "🖼️"; "video" -> "🎞️"; "audio" -> "🎵"; else -> "📁" }
-
 @Composable
 fun ChooserScreen(files: List<Picked>, onBack: () -> Unit, onPick: (Tool, List<Picked>) -> Unit) {
     val kind = files.first().kind
     val use = files.filter { it.kind == kind }
-    val tools = TOOLS.filter { it.accepts(kind) }
+    val tools = TOOLS.filter { it.accepts(if (kind == "other") "exe" else kind) }
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         TopBar("اختار الأداة", "🧰", null, onBack)
         LazyColumn(
@@ -273,16 +353,19 @@ fun ChooserScreen(files: List<Picked>, onBack: () -> Unit, onPick: (Tool, List<P
             item {
                 AppCard {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text(kindEmoji(kind), fontSize = 30.sp)
+                        Text(kindEmoji(kind), fontSize = 30.sp, raw = true)
                         Column {
-                            Text(use.first().name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(use.first().name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, raw = true)
                             Text(
-                                if (use.size > 1) "و ${use.size - 1} ملف تاني" else Fs.size(use.first().size),
-                                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                                if (use.size > 1) "+${use.size - 1}" else Fs.size(use.first().size),
+                                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, raw = true
                             )
                         }
                     }
                 }
+            }
+            if (kind == "other") item {
+                Text("نوع الملف مش معروف. لو ده كتاب تفاعلي (EXE) اختار الأداة المناسبة.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (tools.isEmpty()) item {
                 Text("نوع الملف ده مش مدعوم في الأدوات الحالية.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp))
@@ -297,13 +380,13 @@ fun ChooserScreen(files: List<Picked>, onBack: () -> Unit, onPick: (Tool, List<P
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Box(Modifier.size(42.dp).clip(RoundedCornerShape(13.dp)).background(gc.copy(alpha = 0.2f)), contentAlignment = Alignment.Center) {
-                        Text(t.emoji, fontSize = 20.sp)
+                        Text(t.emoji, fontSize = 20.sp, raw = true)
                     }
                     Column(Modifier.weight(1f)) {
                         Text(t.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                         Text(t.sub, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    Text("‹", fontSize = 22.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if (rtl) "‹" else "›", fontSize = 22.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, raw = true)
                 }
             }
             item { Spacer(Modifier.navigationBarsPadding().height(24.dp)) }
@@ -354,17 +437,17 @@ fun ToolScreen(tool: Tool, initial: List<Picked>, onBack: () -> Unit) {
                 Text(if (picks.isEmpty()) tool.sub else "الملفات المختارة (${picks.size})", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 picks.forEachIndexed { i, p ->
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text(kindEmoji(p.kind), fontSize = 20.sp)
+                        Text(kindEmoji(p.kind), fontSize = 20.sp, raw = true)
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(p.name, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(Fs.size(p.size), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(p.name, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, raw = true)
+                            Text(Fs.size(p.size), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, raw = true)
                         }
                         if (tool.ordered && picks.size > 1) {
-                            TextButton(onClick = { if (i > 0) { val t = picks[i]; picks[i] = picks[i - 1]; picks[i - 1] = t } }, enabled = i > 0 && !running) { Text("▲") }
-                            TextButton(onClick = { if (i < picks.size - 1) { val t = picks[i]; picks[i] = picks[i + 1]; picks[i + 1] = t } }, enabled = i < picks.size - 1 && !running) { Text("▼") }
+                            TextButton(onClick = { if (i > 0) { val t = picks[i]; picks[i] = picks[i - 1]; picks[i - 1] = t } }, enabled = i > 0 && !running) { Text("▲", raw = true) }
+                            TextButton(onClick = { if (i < picks.size - 1) { val t = picks[i]; picks[i] = picks[i + 1]; picks[i + 1] = t } }, enabled = i < picks.size - 1 && !running) { Text("▼", raw = true) }
                         }
-                        IconButton(onClick = { picks.removeAt(i) }, enabled = !running) { Icon(Icons.Default.Close, contentDescription = "حذف") }
+                        IconButton(onClick = { picks.removeAt(i) }, enabled = !running) { Icon(Icons.Default.Close, contentDescription = "remove") }
                     }
                 }
                 FilledTonalButton(
@@ -436,11 +519,11 @@ fun JobPanel(tool: Tool, s: JobState) {
     when (s) {
         is JobState.Running -> Pop {
             AppCard {
-                val ap by animateFloatAsState(s.progress, tween(350), label = "prog")
+                val ap by animateFloatAsState(s.progress, if (Prefs.motion == 0) snap() else tween(250), label = "prog")
                 Text(s.label, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 LinearProgressIndicator(progress = { ap }, modifier = Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(5.dp)))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("${(s.progress * 100).toInt()}%", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("${(s.progress * 100).toInt()}%", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, raw = true)
                     TextButton(onClick = { Jobs.cancel() }) { Text("إلغاء") }
                 }
             }
@@ -461,12 +544,15 @@ fun JobPanel(tool: Tool, s: JobState) {
             AppCard {
                 var on by remember { mutableStateOf(false) }
                 LaunchedEffect(Unit) { on = true }
-                val sc by animateFloatAsState(if (on) 1f else 0f, spring(dampingRatio = 0.4f, stiffness = 260f), label = "pop")
+                val sc by animateFloatAsState(
+                    if (on || Prefs.motion < 2) 1f else 0f,
+                    if (Prefs.motion == 2) spring(dampingRatio = 0.4f, stiffness = 260f) else snap(), label = "pop"
+                )
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Box(
                         Modifier.size(32.dp).graphicsLayer { scaleX = sc; scaleY = sc }.clip(CircleShape).background(MaterialTheme.colorScheme.primary),
                         contentAlignment = Alignment.Center
-                    ) { Text("✓", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold) }
+                    ) { Text("✓", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold, raw = true) }
                     Text("خلصت", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
                     TextButton(onClick = { Jobs.reset() }) { Text("إخفاء") }
                 }
@@ -474,17 +560,17 @@ fun JobPanel(tool: Tool, s: JobState) {
                 s.files.forEach { f ->
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text(f.name, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(Fs.size(f.length()), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(f.name, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, raw = true)
+                            Text(Fs.size(f.length()), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, raw = true)
                         }
                         TextButton(onClick = { openFile(ctx, f) }) { Text("فتح") }
-                        IconButton(onClick = { shareFile(ctx, f) }) { Icon(Icons.Default.Share, contentDescription = "مشاركة") }
+                        IconButton(onClick = { shareFile(ctx, f) }) { Icon(Icons.Default.Share, contentDescription = "share") }
                     }
                 }
                 Button(
                     onClick = {
                         val ok = s.files.count { Fs.saveToDownloads(ctx, it) }
-                        Toast.makeText(ctx, if (ok == s.files.size) "اتحفظ في Download/QuickFile" else "فشل حفظ ${s.files.size - ok} ملف", Toast.LENGTH_LONG).show()
+                        Toast.makeText(ctx, if (ok == s.files.size) tr("اتحفظ في Download/QuickFile") else tr("فشل حفظ") + ": ${s.files.size - ok}", Toast.LENGTH_LONG).show()
                     },
                     shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()
                 ) { Text(if (s.files.size > 1) "حفظ الكل في التنزيلات" else "حفظ في التنزيلات") }
@@ -501,12 +587,12 @@ private fun openFile(ctx: Context, f: File) {
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         )
     } catch (_: Exception) {
-        Toast.makeText(ctx, "مفيش تطبيق يفتح الملف ده، احفظه وافتحه من الملفات", Toast.LENGTH_LONG).show()
+        Toast.makeText(ctx, tr("مفيش تطبيق يفتح الملف ده، احفظه وافتحه من الملفات"), Toast.LENGTH_LONG).show()
     }
 }
 
 private fun shareFile(ctx: Context, f: File) {
     val i = Intent(Intent.ACTION_SEND).setType(Fs.mime(f)).putExtra(Intent.EXTRA_STREAM, Fs.uriFor(ctx, f))
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    ctx.startActivity(Intent.createChooser(i, "مشاركة").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    ctx.startActivity(Intent.createChooser(i, "share").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 }

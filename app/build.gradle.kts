@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("com.chaquo.python")
 }
 
 android {
@@ -10,8 +11,8 @@ android {
         applicationId = "com.edunurse.quickfile"
         minSdk = 29
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
     val ksPath = System.getenv("KEYSTORE_PATH")
@@ -40,6 +41,13 @@ android {
     buildFeatures { compose = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
     packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
+}
+
+chaquopy {
+    defaultConfig {
+        version = "3.12"
+        pip { install("pillow") }
+    }
 }
 
 dependencies {

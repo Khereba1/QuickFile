@@ -60,6 +60,7 @@ class Tool(
 fun kindOf(name: String, mime: String?): String {
     val ext = name.substringAfterLast('.', "").lowercase()
     return when {
+        ext == "exe" || mime in setOf("application/x-msdownload", "application/x-dosexec", "application/vnd.microsoft.portable-executable", "application/x-ms-dos-executable") -> "exe"
         ext == "pdf" || mime == "application/pdf" -> "pdf"
         ext in setOf("jpg", "jpeg", "png", "webp", "bmp", "gif", "heic") || mime?.startsWith("image/") == true -> "image"
         ext in setOf("mp4", "mkv", "webm", "mov", "avi", "3gp", "m4v", "ts") || mime?.startsWith("video/") == true -> "video"
@@ -74,6 +75,7 @@ fun Tool.accepts(kind: String): Boolean = mimes.any {
         "image/*" -> kind == "image"
         "video/*" -> kind == "video"
         "audio/*" -> kind == "audio"
+        "*/*" -> kind == "exe"
         else -> false
     }
 }
@@ -89,6 +91,8 @@ private val AFMT = listOf("mp3" to "MP3", "m4a" to "M4A", "opus" to "Opus", "fla
 private val AQ = listOf("high" to "عالية", "mid" to "متوسطة", "low" to "صغيرة")
 
 val TOOLS: List<Tool> = listOf(
+    Tool("mpreview", "معاينة", "عرض خفيف للصور والصوت والفيديو", "▶️", Group.VIDEO, arrayOf("video/*", "audio/*", "image/*"), false, special = "preview"),
+
     Tool("vcompress", "ضغط الفيديو", "قلّل الحجم بأقل خسارة في الجودة", "🗜️", Group.VIDEO, VID, true, opts = listOf(
         Opt.Choice("level", "مستوى الضغط", listOf("light" to "خفيف", "mid" to "متوسط", "strong" to "قوي"), "mid"),
         Opt.Choice("res", "الدقة", listOf("orig" to "الأصلية", "720" to "720p", "480" to "480p"), "orig"),
@@ -118,6 +122,10 @@ val TOOLS: List<Tool> = listOf(
         Opt.Choice("fmt", "الصيغة", AFMT + ("voice" to "رسالة صوتية"), "mp3"),
         Opt.Choice("q", "الجودة", AQ, "mid")
     ), exec = { Media.toAudio(it) }),
+
+    Tool("exepdf", "كتاب تفاعلي (EXE) إلى PDF", "حوّل كتب Flip PDF / FlipBuilder لـ PDF", "📖", Group.PDF, arrayOf("*/*"), true, opts = listOf(
+        Opt.Choice("level", "حجم الناتج", listOf("bal" to "متوازن", "strong" to "أصغر", "max" to "الأصغر"), "bal")
+    ), exec = { Exe.convert(it) }),
 
     Tool("porganize", "تنظيم الصفحات", "شوف كل الصفحات، رتّب، احذف، دوّر، وضيف صور أو ملفات", "🧩", Group.PDF, PDFM, false, special = "organize"),
 

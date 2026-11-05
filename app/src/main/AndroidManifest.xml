@@ -50,6 +50,45 @@
                 <data android:mimeType="video/*" />
                 <data android:mimeType="audio/*" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/x-msdownload" />
+                <data android:mimeType="application/x-dosexec" />
+                <data android:mimeType="application/vnd.microsoft.portable-executable" />
+                <data android:mimeType="application/x-ms-dos-executable" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="*/*" />
+                <data android:pathSuffix=".exe" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/x-msdownload" />
+                <data android:mimeType="application/x-dosexec" />
+                <data android:mimeType="application/vnd.microsoft.portable-executable" />
+                <data android:mimeType="application/x-ms-dos-executable" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/x-msdownload" />
+                <data android:mimeType="application/x-dosexec" />
+                <data android:mimeType="application/vnd.microsoft.portable-executable" />
+                <data android:mimeType="application/x-ms-dos-executable" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
         </activity>
 
         <service
