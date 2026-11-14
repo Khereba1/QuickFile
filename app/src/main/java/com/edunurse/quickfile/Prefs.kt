@@ -15,7 +15,9 @@ object Prefs {
     /** 0 بدون حركات، 1 خفيفة (الافتراضي)، 2 كاملة */
     var motion by mutableIntStateOf(1)
     var lang by mutableStateOf("ar")
-    var mono by mutableStateOf(false)
+    /** system | cairo | plex | mono */
+    var font by mutableStateOf("cairo")
+    val mono: Boolean get() = font == "mono"
     var textScale by mutableFloatStateOf(1f)
 
     fun init(ctx: Context) {
@@ -23,13 +25,13 @@ object Prefs {
         sp = s
         motion = s.getInt("motion", 1)
         lang = s.getString("lang", "ar") ?: "ar"
-        mono = s.getBoolean("mono", false)
+        font = s.getString("font", null) ?: if (s.getBoolean("mono", false)) "mono" else "cairo"
         textScale = s.getFloat("ts", 1f)
     }
 
     fun setLanguage(l: String) {
         lang = l
-        mono = l == "en"
+        font = if (l == "en") "mono" else "cairo"
         save()
     }
 
@@ -37,7 +39,7 @@ object Prefs {
         sp?.edit()
             ?.putInt("motion", motion)
             ?.putString("lang", lang)
-            ?.putBoolean("mono", mono)
+            ?.putString("font", font)
             ?.putFloat("ts", textScale)
             ?.apply()
     }
