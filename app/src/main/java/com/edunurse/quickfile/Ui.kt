@@ -87,9 +87,9 @@ private val LightColors = lightColorScheme(
     outline = Color(0xFFD5DBD6), outlineVariant = Color(0xFFD5DBD6), error = Color(0xFFB3261E)
 )
 
-private val MonoTypography: Typography = Typography().let { t ->
-    val m = FontFamily.Monospace
-    Typography(
+private fun familyTypography(m: FontFamily): Typography {
+    val t = Typography()
+    return Typography(
         displayLarge = t.displayLarge.copy(fontFamily = m), displayMedium = t.displayMedium.copy(fontFamily = m),
         displaySmall = t.displaySmall.copy(fontFamily = m), headlineLarge = t.headlineLarge.copy(fontFamily = m),
         headlineMedium = t.headlineMedium.copy(fontFamily = m), headlineSmall = t.headlineSmall.copy(fontFamily = m),
@@ -102,12 +102,18 @@ private val MonoTypography: Typography = Typography().let { t ->
 }
 
 @Composable
+private fun appTypography(): Typography {
+    val fam: FontFamily? = when (Prefs.font) { "cairo" -> CairoFamily; "plex" -> PlexFamily; "mono" -> MonoFamily; else -> null }
+    return remember(fam) { if (fam == null) Typography() else familyTypography(fam) }
+}
+
+@Composable
 fun AppTheme(content: @Composable () -> Unit) {
     val dir = if (Prefs.lang == "ar") LayoutDirection.Rtl else LayoutDirection.Ltr
     val d = LocalDensity.current
     MaterialTheme(
         colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors,
-        typography = if (Prefs.mono) MonoTypography else Typography()
+        typography = appTypography()
     ) {
         ProvideTextStyle(MaterialTheme.typography.bodyLarge) {
             CompositionLocalProvider(
@@ -234,9 +240,9 @@ fun Home(onOpen: (Tool) -> Unit) {
 }
 
 @Composable
-private fun CatChip(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun CatChip(label: String, selected: Boolean, raw: Boolean = false, onClick: () -> Unit) {
     FilterChip(
-        selected = selected, onClick = onClick, label = { Text(label) },
+        selected = selected, onClick = onClick, label = { Text(label, raw = raw) },
         colors = FilterChipDefaults.filterChipColors(
             selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
             selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -256,7 +262,7 @@ private fun Banner(onSettings: () -> Unit) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
                 if (Prefs.mono) "> QuickFile_" else "QuickFile",
-                style = TextStyle(brush = Brush.linearGradient(listOf(p, MaterialTheme.colorScheme.onSurface)), fontSize = 36.sp, fontWeight = FontWeight.ExtraBold),
+                style = TextStyle(brush = Brush.linearGradient(listOf(p, MaterialTheme.colorScheme.onSurface)), fontSize = 36.sp, fontWeight = FontWeight.ExtraBold, fontFamily = MaterialTheme.typography.bodyLarge.fontFamily),
                 raw = true
             )
             Text("ملفاتك. على جهازك. من غير نت.", fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -276,6 +282,8 @@ private fun Banner(onSettings: () -> Unit) {
 
 @Composable
 private fun SettingsDialog(onDismiss: () -> Unit) {
+    val ctx = LocalContext.current
+    val ver = remember { try { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "" } catch (_: Exception) { "" } }
     AlertDialog(
         onDismissRequest = { Prefs.save(); onDismiss() },
         confirmButton = { TextButton(onClick = { Prefs.save(); onDismiss() }) { Text("تمام") } },
@@ -283,8 +291,8 @@ private fun SettingsDialog(onDismiss: () -> Unit) {
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 SetGroup("اللغة") {
-                    CatChip("العربية", Prefs.lang == "ar") { Prefs.setLanguage("ar") }
-                    CatChip("English", Prefs.lang == "en") { Prefs.setLanguage("en") }
+                    CatChip("العربية", Prefs.lang == "ar", raw = true) { Prefs.setLanguage("ar") }
+                    CatChip("English", Prefs.lang == "en", raw = true) { Prefs.setLanguage("en") }
                 }
                 SetGroup("الحركات") {
                     CatChip("بدون", Prefs.motion == 0) { Prefs.motion = 0; Prefs.save() }
@@ -295,9 +303,12 @@ private fun SettingsDialog(onDismiss: () -> Unit) {
                     CatChip("صغير", Prefs.textScale < 0.95f) { Prefs.textScale = 0.88f; Prefs.save() }
                     CatChip("عادي", Prefs.textScale >= 0.95f) { Prefs.textScale = 1f; Prefs.save() }
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("خط Mono مزخرف", fontSize = 14.sp, modifier = Modifier.weight(1f))
-                    Switch(checked = Prefs.mono, onCheckedChange = { Prefs.mono = it; Prefs.save() })
+                Text("QuickFile v$ver", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, raw = true)
+                SetGroup("الخط") {
+                    CatChip("النظام", Prefs.font == "system") { Prefs.font = "system"; Prefs.save() }
+                    CatChip("Cairo", Prefs.font == "cairo", raw = true) { Prefs.font = "cairo"; Prefs.save() }
+                    CatChip("IBM Plex", Prefs.font == "plex", raw = true) { Prefs.font = "plex"; Prefs.save() }
+                    CatChip("Mono", Prefs.font == "mono", raw = true) { Prefs.font = "mono"; Prefs.save() }
                 }
             }
         }

@@ -21,17 +21,22 @@ Only core Material icons are used (material-icons-core); tool icons are emojis.
   page numbers, watermark (text rendered with Canvas so Arabic shapes correctly), protect, unlock, compress,
   PDF to images, images to PDF, convert images, `organize` (export for the page organizer).
 - Ocr.kt: Tesseract OCR to a searchable PDF (invisible text layer) + TXT. Data and font come from build-time downloads.
-- Viewer.kt: `PdfDoc` (PdfRenderer wrapper, byte-bounded LruCache), `PdfText` (PdfBox text per page, used for search and
-  copy) and the PDF reader: pinch zoom + pan + double-tap (custom Initial-pass gesture handler, scales the LazyColumn with
-  graphicsLayer and re-renders at higher resolution after zoom settles), in-file search (page list, no in-page highlight),
-  page-text bottom sheet with real selection/copy (SelectionContainer), jump-to-page, night mode (invert filter).
+- Viewer.kt: PDF reader v2. `PdfDoc` wraps PdfRenderer (`renderTile` renders any region at any scale with a Matrix, so zoom stays sharp;
+  `sizes()` gives page sizes in points). The reader draws on a Compose Canvas: per-page low-res base bitmap + 512px tiles rendered at the
+  settled zoom (`rsZoom`) on a single-thread dispatcher, byte-bounded LruCaches, jobs cancelled when scrolled away. One custom gesture loop
+  (pan with fling, pinch zoom about centroid, double-tap zoom, long-press then drag = word selection). Text layer: `PdfText.words` uses a
+  PDFTextStripper subclass that collects per-word rectangles (PdfBox positions, page points, top-left origin) and orders them in reading order
+  (RTL lines for Arabic). Selection works on whole words within one page; copy joins words; search runs over all pages, highlights words
+  (Arabic normalization in `normAr`), jumps to hits. Export whole text = save TXT to Downloads (+ clipboard when short). Night mode = invert filter.
 - Preview.kt: light media preview (VideoView + MediaController for video/audio, zoomable image).
 - Organizer.kt: page organizer (thumbnail grid, select, move, rotate, duplicate, delete, add PDFs/images, export via `Jobs`).
 - Exe.kt + app/src/main/python/{flip_exe_to_pdf.py, exe_bridge.py}: exe flip-book converter. Kotlin calls
   `exe_bridge.run(src, dst, level, cb)` through Chaquopy; `cb` is the public `ExeCallback` class (progress/cancelled).
   flip_exe_to_pdf.py is the owner's tested module: keep it identical to reference/flip_exe_to_pdf.py.
-- Prefs.kt: persisted settings (motion 0/1/2, language ar/en, mono font, text scale). Default motion = 1 (light).
-- I18n.kt: `tr()` Arabic -> English dictionary (+ fragment replacement for dynamic labels) and a package-level `Text`
+- Prefs.kt: persisted settings (motion 0/1/2, language ar/en, font system|cairo|plex|mono, text scale). Default motion = 1 (light).
+- Fonts.kt + res/font/: bundled fonts: Cairo (static instances cut from the variable font), IBM Plex Sans Arabic, DejaVu Sans Mono.
+  Mono is bundled because the owner's phone has a custom system font that also replaces `monospace`. The mono font has no Arabic glyphs (falls back to the system font).
+- I18n.kt: `tr()` Arabic -> English dictionary (+ whole-word fragment replacement for dynamic labels; never replaces inside another Arabic word) and a package-level `Text`
   wrapper that shadows Material's Text and translates automatically. Use `raw = true` for file names / extracted text.
   When adding any new Arabic string, add its English to `I18n.en`. Avoid "x من y" in labels, use "x/y".
 - Ui.kt: theme (RTL for ar, LTR for en, mono typography, fixed font scale), motion-aware helpers (`bounceClick`, `enter`,
@@ -58,7 +63,8 @@ features (ffmpeg arguments, PyMuPDF logic, the exe flip-book converter). Never p
   APK grows by roughly 20-30 MB because of the embedded interpreter. exe conversion itself has never been run on a device.
 - ffmpeg-kit-16kb codec set (libx264, libmp3lame, libopus, libvpx) is unverified.
 - Tesseract ResultIterator is not recycled per page (small native leak); PDF protect uses 128-bit via pdfbox-android (unverified).
-- PDF reader: no in-page text selection or search highlighting (needs word positions; Arabic bidi makes PdfBox positions unreliable).
-  Selection/copy works per page through the text sheet. Organizer reorders with buttons (no drag and drop).
+- PDF reader v2 is new and unverified on device: tile rendering via PdfRenderer.render(bitmap, clip, matrix), PdfBox word rectangles may be slightly
+  off for rotated pages or odd fonts, selection is word-based (no draggable handles, one page only), no pinch rendering until zoom settles.
+  Organizer reorders with buttons (no drag and drop).
 - Not done yet: HTML to PDF, docx/pptx text extraction, audio tags editor, N-up, document scanner.
 

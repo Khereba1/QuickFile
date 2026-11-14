@@ -174,6 +174,14 @@ object I18n {
         "200 (أسرع)" to "200 (faster)",
         "300 (أدق)" to "300 (more accurate)",
         "احفظ ملف نصي TXT كمان" to "Also save a TXT file",
+        "الخط" to "Font",
+        "نسخ" to "Copy",
+        "الصفحة كلها" to "Select page",
+        "نتيجة" to "results",
+        "جاري استخراج النص…" to "Extracting text…",
+        "مفيش نص في الملف (ممسوح؟) جرّب OCR" to "No text in this file (scanned?). Try OCR",
+        "اتنسخ واتحفظ في Download/QuickFile" to "Copied and saved to Download/QuickFile",
+        "النظام" to "System",
         "رجوع" to "Back",
         "ابحث عن أداة…" to "Search tools…",
         "مسح" to "Clear",
@@ -240,14 +248,17 @@ object I18n {
     )
 
     /** للنصوص الديناميكية (فيها أرقام/أسماء): نستبدل الأجزاء المعروفة، الأطول الأول */
-    val frags: List<Pair<String, String>> = en.entries.map { it.key to it.value }.sortedByDescending { it.first.length }
+    /** الاستبدال بيحصل لكلمات كاملة بس (مش جزء من كلمة عربية تانية) */
+    val frags: List<Pair<Regex, String>> = en.entries.sortedByDescending { it.key.length }.map {
+        Regex("(?<![\\u0600-\\u06FF])" + Regex.escape(it.key) + "(?![\\u0600-\\u06FF])") to Regex.escapeReplacement(it.value)
+    }
 }
 
 fun tr(s: String): String {
     if (Prefs.lang != "en" || s.isEmpty() || !s.any { it in '\u0600'..'\u06FF' }) return s
     I18n.en[s]?.let { return it }
     var r = s
-    for ((k, v) in I18n.frags) if (k in r) r = r.replace(k, v)
+    for ((re, v) in I18n.frags) r = re.replace(r, v)
     return r
 }
 
