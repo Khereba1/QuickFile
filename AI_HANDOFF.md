@@ -21,13 +21,11 @@ Only core Material icons are used (material-icons-core); tool icons are emojis.
   page numbers, watermark (text rendered with Canvas so Arabic shapes correctly), protect, unlock, compress,
   PDF to images, images to PDF, convert images, `organize` (export for the page organizer).
 - Ocr.kt: Tesseract OCR to a searchable PDF (invisible text layer) + TXT. Data and font come from build-time downloads.
-- Viewer.kt: PDF reader v2. `PdfDoc` wraps PdfRenderer (`renderTile` renders any region at any scale with a Matrix, so zoom stays sharp;
-  `sizes()` gives page sizes in points). The reader draws on a Compose Canvas: per-page low-res base bitmap + 512px tiles rendered at the
-  settled zoom (`rsZoom`) on a single-thread dispatcher, byte-bounded LruCaches, jobs cancelled when scrolled away. One custom gesture loop
-  (pan with fling, pinch zoom about centroid, double-tap zoom, long-press then drag = word selection). Text layer: `PdfText.words` uses a
-  PDFTextStripper subclass that collects per-word rectangles (PdfBox positions, page points, top-left origin) and orders them in reading order
-  (RTL lines for Arabic). Selection works on whole words within one page; copy joins words; search runs over all pages, highlights words
-  (Arabic normalization in `normAr`), jumps to hits. Export whole text = save TXT to Downloads (+ clipboard when short). Night mode = invert filter.
+- Viewer.kt: light PDF viewer (v1): LazyColumn of PdfRenderer bitmaps, pinch zoom + pan + double-tap (Initial-pass gesture handler),
+  in-file search (page list), page-text bottom sheet with real selection/copy (PdfBox text), jump-to-page, night mode.
+  A heavier "reader v2" (tile rendering + in-page selection/highlight) was tried in 1.3 and REVERTED on purpose: the owner judged it
+  not close enough to Google Drive's viewer. It exists in git history (commit "v1.3: reader v2"). Do not rebuild a full reader;
+  the product direction is "tools hub": invest in conversion/compression/organizing quality instead. `PdfDoc` here is also used by Organizer.
 - Preview.kt: light media preview (VideoView + MediaController for video/audio, zoomable image).
 - Organizer.kt: page organizer (thumbnail grid, select, move, rotate, duplicate, delete, add PDFs/images, export via `Jobs`).
 - Exe.kt + app/src/main/python/{flip_exe_to_pdf.py, exe_bridge.py}: exe flip-book converter. Kotlin calls
@@ -63,8 +61,6 @@ features (ffmpeg arguments, PyMuPDF logic, the exe flip-book converter). Never p
   APK grows by roughly 20-30 MB because of the embedded interpreter. exe conversion itself has never been run on a device.
 - ffmpeg-kit-16kb codec set (libx264, libmp3lame, libopus, libvpx) is unverified.
 - Tesseract ResultIterator is not recycled per page (small native leak); PDF protect uses 128-bit via pdfbox-android (unverified).
-- PDF reader v2 is new and unverified on device: tile rendering via PdfRenderer.render(bitmap, clip, matrix), PdfBox word rectangles may be slightly
-  off for rotated pages or odd fonts, selection is word-based (no draggable handles, one page only), no pinch rendering until zoom settles.
-  Organizer reorders with buttons (no drag and drop).
+- PDF viewer is intentionally basic (zoom re-renders after settling; text copy per page via a sheet, no in-page selection). Organizer reorders with buttons (no drag and drop).
 - Not done yet: HTML to PDF, docx/pptx text extraction, audio tags editor, N-up, document scanner.
 

@@ -118,7 +118,7 @@ fun AppTheme(content: @Composable () -> Unit) {
         ProvideTextStyle(MaterialTheme.typography.bodyLarge) {
             CompositionLocalProvider(
                 LocalLayoutDirection provides dir,
-                LocalDensity provides Density(d.density, Prefs.textScale)
+                LocalDensity provides Density(d.density, Prefs.textScale * (if (Prefs.mono) 0.9f else 1f))
             ) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background, content = content)
             }
@@ -262,7 +262,8 @@ private fun Banner(onSettings: () -> Unit) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
                 if (Prefs.mono) "> QuickFile_" else "QuickFile",
-                style = TextStyle(brush = Brush.linearGradient(listOf(p, MaterialTheme.colorScheme.onSurface)), fontSize = 36.sp, fontWeight = FontWeight.ExtraBold, fontFamily = MaterialTheme.typography.bodyLarge.fontFamily),
+                modifier = Modifier.padding(end = 40.dp),
+                style = TextStyle(brush = Brush.linearGradient(listOf(p, MaterialTheme.colorScheme.onSurface)), fontSize = if (Prefs.mono) 30.sp else 36.sp, fontWeight = FontWeight.ExtraBold, fontFamily = MaterialTheme.typography.bodyLarge.fontFamily),
                 raw = true
             )
             Text("ملفاتك. على جهازك. من غير نت.", fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -338,9 +339,9 @@ private fun ToolCard(t: Tool, modifier: Modifier, onClick: () -> Unit) {
                 Text(t.emoji, fontSize = 22.sp, raw = true)
             }
             Spacer(Modifier.height(6.dp))
-            Text(t.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(t.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = if (Prefs.mono) 2 else 1, overflow = TextOverflow.Ellipsis)
             Text(
-                t.sub, fontSize = 12.sp, lineHeight = 17.sp, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                t.sub, fontSize = 12.sp, lineHeight = 17.sp, minLines = 2, maxLines = if (Prefs.mono) 3 else 2, overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
