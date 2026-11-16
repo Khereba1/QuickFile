@@ -11,10 +11,10 @@ enum class Group(val title: String, val color: Long) {
     OCR("استخراج النص", 0xFF6CB6FF)
 }
 
-sealed class Opt(val key: String, val label: String) {
-    class Choice(key: String, label: String, val choices: List<Pair<String, String>>, val def: String) : Opt(key, label)
-    class Text(key: String, label: String, val hint: String, val def: String = "", val numeric: Boolean = false) : Opt(key, label)
-    class Toggle(key: String, label: String, val def: Boolean) : Opt(key, label)
+sealed class Opt(val key: String, val label: String, val showIf: ((Map<String, String>) -> Boolean)? = null) {
+    class Choice(key: String, label: String, val choices: List<Pair<String, String>>, val def: String, showIf: ((Map<String, String>) -> Boolean)? = null) : Opt(key, label, showIf)
+    class Text(key: String, label: String, val hint: String, val def: String = "", val numeric: Boolean = false, showIf: ((Map<String, String>) -> Boolean)? = null) : Opt(key, label, showIf)
+    class Toggle(key: String, label: String, val def: Boolean, showIf: ((Map<String, String>) -> Boolean)? = null) : Opt(key, label, showIf)
 }
 
 class In(val name: String, val file: File) {
@@ -42,6 +42,13 @@ class Ctx(
     }
 }
 
+/** وضع «حجم مستهدف» في أدوات الضغط */
+fun Ctx.isTarget(): Boolean = s("mode") == "target"
+fun Ctx.targetMb(): Double? {
+    val v = if (s("mb") == "custom") s("mbc") else s("mb")
+    return v.replace(',', '.').toDoubleOrNull()?.takeIf { it > 0.0 }
+}
+
 class Tool(
     val id: String,
     val title: String,
@@ -53,6 +60,7 @@ class Tool(
     val minFiles: Int = 1,
     val ordered: Boolean = false,
     val opts: List<Opt> = emptyList(),
+    val compare: Boolean = false,
     val special: String? = null,
     val exec: suspend (Ctx) -> List<File> = { emptyList() }
 )
@@ -90,23 +98,32 @@ private val PDF_IMG = arrayOf("application/pdf", "image/*")
 private val AFMT = listOf("mp3" to "MP3", "m4a" to "M4A", "opus" to "Opus", "flac" to "FLAC", "wav" to "WAV")
 private val AQ = listOf("high" to "عالية", "mid" to "متوسطة", "low" to "صغيرة")
 
+private val MBS = listOf("5" to "5 MB", "10" to "10 MB", "20" to "20 MB", "25" to "25 MB", "50" to "50 MB", "100" to "100 MB", "custom" to "مخصص")
+private val NOT_TARGET: (Map<String, String>) -> Boolean = { it["mode"] != "target" }
+private fun targetOpts(defMb: String): List<Opt> = listOf(
+    Opt.Choice("mode", "طريقة الضغط", listOf("level" to "بمستوى", "target" to "لحجم مستهدف"), "level"),
+    Opt.Choice("mb", "الحجم المستهدف", MBS, defMb, showIf = { it["mode"] == "target" }),
+    Opt.Text("mbc", "الحجم بالـ MB", "مثال: 12.5", "", numeric = true, showIf = { it["mode"] == "target" && it["mb"] == "custom" })
+)
+
 val TOOLS: List<Tool> = listOf(
     Tool("mpreview", "معاينة", "عرض خفيف للصور والصوت والفيديو", "▶️", Group.VIDEO, arrayOf("video/*", "audio/*", "image/*"), false, special = "preview"),
 
-    Tool("vcompress", "ضغط الفيديو", "قلّل الحجم بأقل خسارة في الجودة", "🗜️", Group.VIDEO, VID, true, opts = listOf(
-        Opt.Choice("level", "مستوى الضغط", listOf("light" to "خفيف", "mid" to "متوسط", "strong" to "قوي"), "mid"),
-        Opt.Choice("res", "الدقة", listOf("orig" to "الأصلية", "720" to "720p", "480" to "480p"), "orig"),
-        Opt.Choice("engine", "طريقة المعالجة", listOf("x264" to "جودة أعلى", "hw" to "أسرع (هاردوير)"), "x264")
-    ), exec = { Media.vcompress(it) }),
+    Tool("vcompress", "ضغط الفيديو", "قلّل الحجم بأقل خسارة في الجودة", "🗜️", Group.VIDEO, VID, true, compare = true,
+        opts = targetOpts("50") + listOf(
+            Opt.Choice("level", "مستوى الضغط", listOf("light" to "خفيف", "mid" to "متوسط", "strong" to "قوي"), "mid", showIf = NOT_TARGET),
+            Opt.Choice("res", "الدقة", listOf("orig" to "الأصلية", "720" to "720p", "480" to "480p"), "orig", showIf = NOT_TARGET),
+            Opt.Choice("engine", "طريقة المعالجة", listOf("x264" to "جودة أعلى", "hw" to "أسرع (هاردوير)"), "x264")
+        ), exec = { Media.vcompress(it) }),
 
     Tool("vconvert", "تحويل صيغة الفيديو", "MP4 / MKV / WebM", "🎞️", Group.VIDEO, VID, true, opts = listOf(
         Opt.Choice("to", "التحويل إلى", listOf("mp4" to "MP4", "mkv" to "MKV (سريع)", "webm" to "WebM"), "mp4")
     ), exec = { Media.vconvert(it) }),
 
-    Tool("vaudio", "استخراج الصوت", "طلّع الصوت من أي فيديو", "🎧", Group.VIDEO, VID, true, opts = listOf(
-        Opt.Choice("fmt", "الصيغة", AFMT, "mp3"),
-        Opt.Choice("q", "الجودة", AQ, "mid")
-    ), exec = { Media.toAudio(it) }),
+    Tool("vaudio", "استخراج الصوت", "طلّع الصوت من أي فيديو", "🎧", Group.VIDEO, VID, true,
+        opts = listOf(Opt.Choice("fmt", "الصيغة", AFMT, "mp3")) + targetOpts("5") +
+            listOf(Opt.Choice("q", "الجودة", AQ, "mid", showIf = NOT_TARGET)),
+        exec = { Media.toAudio(it) }),
 
     Tool("cut", "قص مقطع", "فيديو أو صوت، من وقت لوقت", "✂️", Group.VIDEO, MEDIA, false, opts = listOf(
         Opt.Text("start", "البداية", "00:00:10 أو 1:30", "0"),
@@ -118,18 +135,10 @@ val TOOLS: List<Tool> = listOf(
         Opt.Choice("afmt", "صيغة الصوت (للدمج الصوتي فقط)", listOf("m4a" to "M4A", "mp3" to "MP3"), "m4a")
     ), exec = { Media.merge(it) }),
 
-    Tool("aconvert", "تحويل وضغط الصوت", "MP3 / M4A / Opus / FLAC / WAV", "🎵", Group.AUDIO, AUD, true, opts = listOf(
-        Opt.Choice("fmt", "الصيغة", AFMT + ("voice" to "رسالة صوتية"), "mp3"),
-        Opt.Choice("q", "الجودة", AQ, "mid")
-    ), exec = { Media.toAudio(it) }),
-
-    Tool("exepdf", "كتاب تفاعلي (EXE) إلى PDF", "حوّل كتب Flip PDF / FlipBuilder لـ PDF", "📖", Group.PDF, arrayOf("*/*"), true, opts = listOf(
-        Opt.Choice("level", "حجم الناتج", listOf("bal" to "متوازن", "strong" to "أصغر", "max" to "الأصغر"), "bal")
-    ), exec = { Exe.convert(it) }),
-
-    Tool("porganize", "تنظيم الصفحات", "شوف كل الصفحات، رتّب، احذف، دوّر، وضيف صور أو ملفات", "🧩", Group.PDF, PDFM, false, special = "organize"),
-
-    Tool("pview", "معاينة PDF", "قارئ خفيف مع أدوات على الملف", "👁️", Group.PDF, PDFM, false, special = "viewer"),
+    Tool("aconvert", "تحويل وضغط الصوت", "MP3 / M4A / Opus / FLAC / WAV", "🎵", Group.AUDIO, AUD, true, compare = true,
+        opts = listOf(Opt.Choice("fmt", "الصيغة", AFMT + ("voice" to "رسالة صوتية"), "mp3")) + targetOpts("5") +
+            listOf(Opt.Choice("q", "الجودة", AQ, "mid", showIf = NOT_TARGET)),
+        exec = { Media.toAudio(it) }),
 
     Tool("pmerge", "دمج PDF", "اجمع أكتر من ملف في ملف واحد", "📚", Group.PDF, PDFM, true, minFiles = 2, ordered = true,
         exec = { Pdf.merge(it) }),
@@ -146,9 +155,10 @@ val TOOLS: List<Tool> = listOf(
         Opt.Text("val", "الصفحات اللي هتتحذف", "مثال: 2,5-7", "")
     ), exec = { Pdf.split(it, "delete") }),
 
-    Tool("pcompress", "ضغط PDF", "صغّر حجم الملفات الممسوحة", "🗜️", Group.PDF, PDFM, true, opts = listOf(
-        Opt.Choice("level", "مستوى الضغط", listOf("light" to "خفيف", "mid" to "متوسط", "strong" to "قوي"), "mid")
-    ), exec = { Pdf.compress(it) }),
+    Tool("pcompress", "ضغط PDF", "صغّر حجم الملفات الممسوحة", "🗜️", Group.PDF, PDFM, true, compare = true,
+        opts = targetOpts("20") + listOf(
+            Opt.Choice("level", "مستوى الضغط", listOf("light" to "خفيف", "mid" to "متوسط", "strong" to "قوي"), "mid", showIf = NOT_TARGET)
+        ), exec = { Pdf.compress(it) }),
 
     Tool("protate", "تدوير الصفحات", "لف كل الصفحات أو صفحات معينة", "🔄", Group.PDF, PDFM, true, opts = listOf(
         Opt.Choice("angle", "الزاوية", listOf("90" to "90° يمين", "180" to "180°", "270" to "90° شمال"), "90"),
@@ -186,7 +196,7 @@ val TOOLS: List<Tool> = listOf(
         Opt.Choice("q", "الجودة", listOf("85" to "عالية", "70" to "متوسطة", "50" to "صغيرة"), "70")
     ), exec = { Pdf.imagesToPdf(it) }),
 
-    Tool("imgconv", "تحويل وضغط الصور", "JPG / PNG / WebP وتصغير الأبعاد", "🏞️", Group.IMAGE, IMG, true, opts = listOf(
+    Tool("imgconv", "تحويل وضغط الصور", "JPG / PNG / WebP وتصغير الأبعاد", "🏞️", Group.IMAGE, IMG, true, compare = true, opts = listOf(
         Opt.Choice("fmt", "الصيغة", listOf("jpg" to "JPG", "png" to "PNG", "webp" to "WebP"), "jpg"),
         Opt.Choice("q", "الجودة", listOf("90" to "عالية", "75" to "متوسطة", "55" to "صغيرة"), "75"),
         Opt.Choice("max", "أكبر بُعد", listOf("0" to "الأصلي", "2560" to "2560", "1600" to "1600", "1024" to "1024"), "0")
@@ -194,7 +204,8 @@ val TOOLS: List<Tool> = listOf(
 
     Tool("ocr", "OCR: PDF قابل للبحث", "حوّل الممسوح لنص عربي/إنجليزي ويطلع PDF وTXT", "🔍", Group.OCR, PDF_IMG, true, opts = listOf(
         Opt.Choice("lang", "اللغة", listOf("ara+eng" to "عربي + إنجليزي", "eng" to "إنجليزي", "ara" to "عربي"), "ara+eng"),
-        Opt.Choice("dpi", "دقة المسح", listOf("200" to "200 (أسرع)", "300" to "300 (أدق)"), "200"),
+        Opt.Choice("dpi", "دقة المسح", listOf("150" to "150 (الأسرع)", "200" to "200", "300" to "300 (أدق)"), "200"),
+        Opt.Toggle("skip", "تخطي الصفحات اللي فيها نص (أسرع)", true),
         Opt.Toggle("txt", "احفظ ملف نصي TXT كمان", true)
     ), exec = { Ocr.run(it) })
 )

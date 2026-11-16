@@ -13,8 +13,9 @@ Only core Material icons are used (material-icons-core); tool icons are emojis.
 ## Source map (app/src/main/java/com/edunurse/quickfile)
 - Tools.kt: data model (Group, Opt.Choice/Text/Toggle, In, Ctx, Tool), `kindOf()`, `Tool.accepts(kind)` and the
   registry `TOOLS`. Special tools (`special = "organize" | "viewer"`) open their own screens instead of ToolScreen.
-- Engine.kt: Picked, JobState, `Fs` (SAF copy, MediaStore save to Download/QuickFile, FileProvider), `Jobs`
-  (single global job runner with wake lock + KeepAliveService; progress via StateFlow `Jobs.state`).
+- Engine.kt: Picked, JobState, `Fs` (SAF copy, `Fs.save` = chosen SAF folder or MediaStore Download/QuickFile, FileProvider), `Jobs`:
+  ONE running job + a queue (`Jobs.queue`, `QJob`); starting a job while busy enqueues it; wake lock + KeepAliveService stay on until the queue is empty;
+  results go to `History` and optionally auto-save (`Prefs.autoSave`).
 - Media.kt: FFmpegKit wrapper (`FF.exec` is a cancellable suspend fun) and video/audio operations. Encoders are
   probed at runtime (`FF.encoders()`), because the fork's codec set is unverified.
 - Pdf.kt: `Img` (decode/EXIF/flatten) and `Pdf` operations: merge, split (extract/delete/ranges/every), rotate,
@@ -31,6 +32,11 @@ Only core Material icons are used (material-icons-core); tool icons are emojis.
 - Exe.kt + app/src/main/python/{flip_exe_to_pdf.py, exe_bridge.py}: exe flip-book converter. Kotlin calls
   `exe_bridge.run(src, dst, level, cb)` through Chaquopy; `cb` is the public `ExeCallback` class (progress/cancelled).
   flip_exe_to_pdf.py is the owner's tested module: keep it identical to reference/flip_exe_to_pdf.py.
+- History.kt: persisted recent results (SharedPreferences JSON, max 30 files / 1.5 GB, files live in filesDir/out/<stamp>), Home 'recent' section and HistoryScreen.
+- Options can be conditional: `Opt.showIf`. Compression tools share `targetOpts()` (mode level|target, mb, mbc) and `Ctx.isTarget()/targetMb()`;
+  PDF target = binary search over `PDF_LEVELS`, video target = bitrate from duration (+1 retry), audio target = bitrate clamp 16-320k. `Tool.compare` shows before/after size.
+- Organizer supports drag-and-drop (grid-level long-press drag, swaps as the pointer crosses items) and blank pages (`OPage.blank`).
+- OCR skips pages that already have text (PdfBox) and shows ETA.
 - Prefs.kt: persisted settings (motion 0/1/2, language ar/en, font system|cairo|plex|mono, text scale). Default motion = 1 (light).
 - Fonts.kt + res/font/: bundled fonts: Cairo (static instances cut from the variable font), IBM Plex Sans Arabic, DejaVu Sans Mono.
   Mono is bundled because the owner's phone has a custom system font that also replaces `monospace`. The mono font has no Arabic glyphs (falls back to the system font).

@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 
 sealed class Screen(val depth: Int) {
     data object Home : Screen(0)
+    data object History : Screen(1)
     data class Choose(val files: List<Picked>) : Screen(1)
     data class ToolS(val tool: Tool, val files: List<Picked>) : Screen(2)
     data class Viewer(val file: Picked) : Screen(2)
@@ -46,6 +47,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         Prefs.init(applicationContext)
+        History.init(applicationContext)
         Jobs.cleanup(applicationContext)
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -137,7 +139,8 @@ fun Root() {
         label = "nav"
     ) { s ->
         when (s) {
-            is Screen.Home -> Home { t ->
+            is Screen.History -> HistoryScreen { back() }
+            is Screen.Home -> Home(onHistory = { stack.add(Screen.History) }) { t ->
                 when (t.special) {
                     "viewer" -> pickPdf.launch(arrayOf("application/pdf"))
                     "preview" -> pickMedia.launch(arrayOf("video/*", "audio/*", "image/*"))

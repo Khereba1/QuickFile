@@ -16,11 +16,15 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -32,7 +36,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -48,7 +55,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /** صفحة واحدة في المنظّم: من PDF (idx) أو صورة */
-data class OPage(val id: Int, val src: File, val idx: Int, val rot: Int, val isImg: Boolean)
+data class OPage(val id: Int, val src: File, val idx: Int, val rot: Int, val isImg: Boolean, val blank: Boolean = false)
 
 object Plan { var items: List<OPage> = emptyList() }
 
@@ -66,6 +73,8 @@ fun OrganizerScreen(initial: Picked?, onBack: () -> Unit) {
     val docs = remember { ConcurrentHashMap<String, PdfDoc>() }
     val ids = remember { AtomicInteger(1) }
     var loading by remember { mutableStateOf(false) }
+    val gridState = rememberLazyGridState()
+    var dragId by remember { mutableStateOf<Int?>(null) }
     val state by Jobs.state.collectAsState()
     val running = state is JobState.Running
     val mine = (state as? JobState.Done)?.toolId == "organize" || (state as? JobState.Failed)?.toolId == "organize" || running
@@ -118,6 +127,14 @@ fun OrganizerScreen(initial: Picked?, onBack: () -> Unit) {
             for (i in idxs.reversed()) Collections.swap(pages, i, i + 1)
         }
     }
+    fun itemAt(off: Offset) = gridState.layoutInfo.visibleItemsInfo.firstOrNull {
+        it.offset.x <= off.x && off.x < it.offset.x + it.size.width && it.offset.y <= off.y && off.y < it.offset.y + it.size.height
+    }
+    fun addBlank() {
+        val idxs = pages.indices.filter { pages[it].id in sel }
+        val at = if (idxs.isEmpty()) pages.size else idxs.last() + 1
+        pages.add(at, OPage(ids.getAndIncrement(), File(""), 0, 0, false, blank = true))
+    }
     fun moveEdge(toStart: Boolean) {
         val picked = pages.filter { it.id in sel }
         if (picked.isEmpty()) return
@@ -128,6 +145,7 @@ fun OrganizerScreen(initial: Picked?, onBack: () -> Unit) {
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         TopBar("تنظيم الصفحات", "🧩", null, onBack) {
             if (pages.isNotEmpty()) Text("${pages.size}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            IconButton(onClick = { addBlank() }, enabled = !running && !loading) { Text("⬜", raw = true) }
             IconButton(onClick = { picker.launch(arrayOf("application/pdf", "image/*")) }, enabled = !running && !loading) {
                 Icon(Icons.Default.Add, contentDescription = "إضافة")
             }
@@ -149,16 +167,40 @@ fun OrganizerScreen(initial: Picked?, onBack: () -> Unit) {
                 }
             } else {
                 LazyVerticalGrid(
-                    columns = GridCells.Fixed(3), modifier = Modifier.fillMaxSize(),
+                    columns = GridCells.Fixed(3), state = gridState,
+                    modifier = Modifier.fillMaxSize()
+                        .pointerInput(Unit) {
+                            detectTapGestures(onTap = { off ->
+                                val info = itemAt(off)
+                                val id = if (info != null) pages.getOrNull(info.index)?.id else null
+                                if (id != null) { if (id in sel) sel.remove(id) else sel.add(id) }
+                            })
+                        }
+                        .pointerInput(Unit) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { off -> dragId = itemAt(off)?.let { pages.getOrNull(it.index)?.id } },
+                                onDrag = { change, _ ->
+                                    change.consume()
+                                    val id = dragId
+                                    if (id != null) {
+                                        val from = pages.indexOfFirst { it.id == id }
+                                        val over = itemAt(change.position)
+                                        if (from >= 0 && over != null && over.index != from) pages.add(over.index, pages.removeAt(from))
+                                        val h = gridState.layoutInfo.viewportSize.height
+                                        if (change.position.y < 120f) scope.launch { gridState.scrollBy(-40f) }
+                                        else if (change.position.y > h - 120f) scope.launch { gridState.scrollBy(40f) }
+                                    }
+                                },
+                                onDragEnd = { dragId = null },
+                                onDragCancel = { dragId = null }
+                            )
+                        },
                     contentPadding = PaddingValues(12.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(pages, key = { it.id }) { p ->
                         val n = pages.indexOf(p) + 1
-                        val selected = p.id in sel
-                        Thumb(p, docs[p.src.path], n, selected, if (Prefs.motion == 2) Modifier.animateItem() else Modifier) {
-                            if (selected) sel.remove(p.id) else sel.add(p.id)
-                        }
+                        Thumb(p, docs[p.src.path], n, p.id in sel, dragId == p.id, if (Prefs.motion == 2) Modifier.animateItem() else Modifier)
                     }
                 }
             }
@@ -207,22 +249,25 @@ private fun Act(label: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun Thumb(p: OPage, doc: PdfDoc?, n: Int, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+private fun Thumb(p: OPage, doc: PdfDoc?, n: Int, selected: Boolean, dragging: Boolean, modifier: Modifier) {
     val bmp by produceState<Bitmap?>(null, p.src, p.idx, p.isImg) {
         value = withContext(Dispatchers.Default) {
-            try { if (p.isImg) Img.decode(p.src, 420) else doc?.render(p.idx, 320) } catch (_: Throwable) { null }
+            try { if (p.blank) null else if (p.isImg) Img.decode(p.src, 480) else doc?.render(p.idx, 400) } catch (_: Throwable) { null }
         }
     }
     val rot by animateFloatAsState(p.rot.toFloat(), if (Prefs.motion == 0) snap() else tween(200), label = "rot")
     val shape = RoundedCornerShape(10.dp)
     val bd = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
     Box(
-        modifier.aspectRatio(0.72f).clip(shape).background(Color.White)
-            .border(if (selected) 3.dp else 1.dp, bd, shape).clickable(onClick = onClick),
+        modifier.aspectRatio(0.72f)
+            .graphicsLayer { val sc = if (dragging) 1.07f else 1f; scaleX = sc; scaleY = sc; alpha = if (dragging) 0.85f else 1f }
+            .clip(shape).background(Color.White)
+            .border(if (selected || dragging) 3.dp else 1.dp, if (dragging) MaterialTheme.colorScheme.tertiary else bd, shape),
         contentAlignment = Alignment.Center
     ) {
         val b = bmp
-        if (b == null) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+        if (p.blank) Text("فاضية", color = Color.Gray, fontSize = 12.sp)
+        else if (b == null) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
         else Image(b.asImageBitmap(), null, Modifier.fillMaxSize().rotate(rot), contentScale = ContentScale.Fit)
         Box(
             Modifier.align(Alignment.TopStart).padding(6.dp).clip(CircleShape).background(Color(0xCC000000)).padding(horizontal = 7.dp, vertical = 2.dp)

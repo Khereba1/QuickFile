@@ -13,6 +13,7 @@ import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
 import com.tom_roush.pdfbox.pdmodel.font.PDFont
 import com.tom_roush.pdfbox.pdmodel.font.PDType0Font
 import com.tom_roush.pdfbox.pdmodel.font.PDType1Font
+import com.tom_roush.pdfbox.text.PDFTextStripper
 import com.tom_roush.pdfbox.pdmodel.graphics.image.JPEGFactory
 import com.tom_roush.pdfbox.pdmodel.graphics.state.RenderingMode
 import com.tom_roush.pdfbox.util.Matrix
@@ -81,10 +82,23 @@ object Ocr {
         }
     }
 
+    private fun pageText(src: PDDocument, i: Int): String {
+        val st = PDFTextStripper()
+        st.startPage = i + 1
+        st.endPage = i + 1
+        return st.getText(src).trim()
+    }
+
+    private fun eta(sec: Double): String {
+        val t = sec.toInt()
+        return "%d:%02d".format(t / 60, t % 60)
+    }
+
     suspend fun run(c: Ctx): List<File> {
         Pdf.ensure(c.app)
         val lang = c.s("lang")
         val dpi = c.s("dpi").toIntOrNull() ?: 200
+        val skip = c.on("skip")
         val root = dataRoot(c.app)
         for (l in lang.split("+")) {
             if (!File(root, "tessdata/$l.traineddata").exists()) throw IllegalStateException("ملف لغة OCR ($l) مش موجود جوه التطبيق")
@@ -95,10 +109,20 @@ object Ocr {
             if (!api.init(root.path, lang)) throw IllegalStateException("تعذّر تشغيل محرك OCR")
             api.setPageSegMode(TessBaseAPI.PageSegMode.PSM_AUTO)
             api.setVariable("user_defined_dpi", dpi.toString())
+            api.setVariable("tessedit_do_invert", "0")
             val total = c.inputs.sumOf { if (it.ext == "pdf") Pdf.pageCount(it.file) else 1 }
             var done = 0
-            for (f in c.inputs) {
+            val t0 = System.currentTimeMillis()
+            for ((fi, f) in c.inputs.withIndex()) {
+                fun report() {
+                    val left = if (done > 0) (System.currentTimeMillis() - t0) / 1000.0 / done * (total - done) else -1.0
+                    c.progress(
+                        done.toFloat() / total,
+                        "OCR: صفحة $done/$total · ملف ${fi + 1}/${c.inputs.size}" + (if (left >= 0) " · ~${eta(left)}" else "")
+                    )
+                }
                 val doc = PDDocument()
+                var src: PDDocument? = null
                 val text = StringBuilder()
                 try {
                     val ar = arabicFont(c.app, doc)
@@ -107,15 +131,24 @@ object Ocr {
                         addPage(doc, api, bmp, dpi, ar, text)
                         bmp.recycle()
                         done++
-                        c.progress(done.toFloat() / total, "OCR: صفحة $done/$total")
+                        report()
                     }
+                    report()
                     if (f.ext == "pdf") {
+                        if (skip) src = try { PDDocument.load(f.file) } catch (_: Throwable) { null }
                         val pfd = ParcelFileDescriptor.open(f.file, ParcelFileDescriptor.MODE_READ_ONLY)
                         val r = PdfRenderer(pfd)
                         try {
                             for (i in 0 until r.pageCount) {
                                 currentCoroutineContext().ensureActive()
-                                step(Pdf.render(r, i, dpi))
+                                val sd = src
+                                val existing = if (sd != null) try { pageText(sd, i) } catch (_: Throwable) { "" } else ""
+                                if (sd != null && existing.length >= 40) {
+                                    doc.importPage(sd.getPage(i))
+                                    text.append(existing).append("\n\n")
+                                    done++
+                                    report()
+                                } else step(Pdf.render(r, i, dpi))
                             }
                         } finally { r.close(); pfd.close() }
                     } else {
@@ -130,7 +163,10 @@ object Ocr {
                         t.writeText(text.toString())
                         outs.add(t)
                     }
-                } finally { doc.close() }
+                } finally {
+                    doc.close()
+                    try { src?.close() } catch (_: Throwable) { }
+                }
             }
         } finally { api.recycle() }
         return outs

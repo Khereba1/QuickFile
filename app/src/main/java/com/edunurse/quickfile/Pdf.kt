@@ -284,7 +284,11 @@ object Pdf {
             items.forEachIndexed { n, it ->
                 c.progress(n.toFloat() / items.size, "صفحة ${n + 1}/${items.size}")
                 val rot = ((it.rot % 360) + 360) % 360
-                if (it.isImg) {
+                if (it.blank) {
+                    val page = PDPage(PDRectangle.A4)
+                    out.addPage(page)
+                    page.rotation = rot
+                } else if (it.isImg) {
                     val bmp = Img.flatten(Img.decode(it.src, 2600))
                     val W = 595f
                     val H = W * bmp.height / bmp.width
@@ -325,16 +329,17 @@ object Pdf {
         } finally { doc.close() }
     }
 
-    fun compress(c: Ctx): List<File> = c.inputs.mapIndexed { fi, f ->
-        ensure(c.app)
-        val (maxSide, q) = when (c.s("level")) { "light" -> 2200 to 80; "strong" -> 1100 to 45; else -> 1600 to 62 }
+    /** مستويات الضغط من الأعلى جودة (0) للأصغر حجمًا */
+    private val PDF_LEVELS = listOf(2400 to 88, 2000 to 80, 1700 to 70, 1400 to 60, 1150 to 50, 950 to 42, 780 to 34, 640 to 28)
+
+    private fun compressPass(c: Ctx, f: In, maxSide: Int, q: Int, out: File, base: Float, span: Float, label: String) {
         val doc = PDDocument.load(f.file)
         try {
             val done = HashSet<Any>()
             val pages = doc.numberOfPages
             var pi = 0
             for (page in doc.pages) {
-                c.progress((fi + pi.toFloat() / pages) / c.inputs.size, "ضغط ${f.name} (${pi + 1}/$pages)")
+                c.progress(base + span * pi / pages, "$label (${pi + 1}/$pages)")
                 pi++
                 val res = page.resources ?: continue
                 for (name in res.xObjectNames.toList()) {
@@ -351,14 +356,57 @@ object Pdf {
                     } catch (_: Throwable) { }
                 }
             }
+            doc.save(out)
+        } finally { doc.close() }
+    }
+
+    /** بحث ثنائي على مستويات الضغط لحد ما نلاقي أعلى جودة تدخل في الحجم المطلوب */
+    private fun compressToTarget(c: Ctx, f: In, fi: Int): File {
+        val target = ((c.targetMb() ?: throw IllegalStateException("اكتب الحجم المستهدف")) * 1048576.0).toLong()
+        if (f.file.length() <= target) {
+            c.note = "الملف أصغر من الحجم المطلوب أصلًا"
             val o = c.out("${f.base}_compressed.pdf")
-            doc.save(o)
+            f.file.copyTo(o)
+            return o
+        }
+        val tried = HashMap<Int, File>()
+        var lo = 0
+        var hi = PDF_LEVELS.lastIndex
+        var best = -1
+        var strongest = -1
+        var pass = 0
+        val n = c.inputs.size.toFloat()
+        while (lo <= hi) {
+            val mid = (lo + hi) / 2
+            pass++
+            val t = File(c.outDir, ".try_${fi}_$mid.pdf")
+            val (ms, q) = PDF_LEVELS[mid]
+            compressPass(c, f, ms, q, t, (fi + (pass - 1) / 4f) / n, 0.25f / n, "ضغط لحجم مستهدف (محاولة $pass)")
+            tried[mid] = t
+            if (strongest < mid) strongest = mid
+            if (t.length() <= target) { best = mid; hi = mid - 1 } else lo = mid + 1
+        }
+        val chosenIdx = if (best >= 0) best else strongest
+        val chosen = tried.getValue(chosenIdx)
+        val out = c.out("${f.base}_compressed.pdf")
+        chosen.copyTo(out, overwrite = true)
+        tried.values.forEach { it.delete() }
+        if (best < 0) c.note = "مقدرتش أوصل للحجم المطلوب، ده أصغر حجم ممكن (" + Fs.size(out.length()) + ")"
+        return out
+    }
+
+    fun compress(c: Ctx): List<File> = c.inputs.mapIndexed { fi, f ->
+        ensure(c.app)
+        if (c.isTarget()) compressToTarget(c, f, fi) else {
+            val (maxSide, q) = when (c.s("level")) { "light" -> 2200 to 80; "strong" -> 1100 to 45; else -> 1600 to 62 }
+            val o = c.out("${f.base}_compressed.pdf")
+            compressPass(c, f, maxSide, q, o, fi.toFloat() / c.inputs.size, 1f / c.inputs.size, "ضغط ${f.name}")
             if (o.length() >= f.file.length()) {
                 f.file.copyTo(o, overwrite = true)
                 c.note = "الملف كان مضغوط بالفعل، فرجّعت النسخة الأصلية لأن الضغط مكبّرش فرق."
             }
             o
-        } finally { doc.close() }
+        }
     }
 
     fun toImages(c: Ctx): List<File> {

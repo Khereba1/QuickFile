@@ -19,6 +19,9 @@ object Prefs {
     var font by mutableStateOf("cairo")
     val mono: Boolean get() = font == "mono"
     var textScale by mutableFloatStateOf(1f)
+    /** مجلد الحفظ المختار (SAF tree uri) أو فاضي = التنزيلات */
+    var saveTree by mutableStateOf("")
+    var autoSave by mutableStateOf(false)
 
     fun init(ctx: Context) {
         val s = ctx.getSharedPreferences("qf", Context.MODE_PRIVATE)
@@ -27,6 +30,8 @@ object Prefs {
         lang = s.getString("lang", "ar") ?: "ar"
         font = s.getString("font", null) ?: if (s.getBoolean("mono", false)) "mono" else "cairo"
         textScale = s.getFloat("ts", 1f)
+        saveTree = s.getString("tree", "") ?: ""
+        autoSave = s.getBoolean("auto", false)
     }
 
     fun setLanguage(l: String) {
@@ -41,6 +46,8 @@ object Prefs {
             ?.putString("lang", lang)
             ?.putString("font", font)
             ?.putFloat("ts", textScale)
+            ?.putString("tree", saveTree)
+            ?.putBoolean("auto", autoSave)
             ?.apply()
     }
 }

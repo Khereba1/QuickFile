@@ -61,11 +61,11 @@ object Media {
         t.trim().split(":").map { it.toDoubleOrNull() ?: 0.0 }.fold(0.0) { a, v -> a * 60 + v }
 
     /** returns encoder args + output extension */
-    private fun audioArgs(fmt: String, q: String): Pair<List<String>, String> {
-        val br = when (q) { "high" -> "192k"; "low" -> "64k"; else -> "128k" }
+    private fun audioArgs(fmt: String, q: String, kbps: Int? = null): Pair<List<String>, String> {
+        val br = if (kbps != null) "${kbps}k" else when (q) { "high" -> "192k"; "low" -> "64k"; else -> "128k" }
         return when (fmt) {
             "mp3" -> { FF.need("libmp3lame", "MP3"); listOf("-c:a", "libmp3lame", "-b:a", br) to "mp3" }
-            "opus" -> { FF.need("libopus", "Opus"); listOf("-c:a", "libopus", "-b:a", if (q == "low") "32k" else br) to "ogg" }
+            "opus" -> { FF.need("libopus", "Opus"); listOf("-c:a", "libopus", "-b:a", if (kbps == null && q == "low") "32k" else br) to "ogg" }
             "voice" -> { FF.need("libopus", "الرسالة الصوتية"); listOf("-c:a", "libopus", "-b:a", "32k", "-ac", "1", "-ar", "48000", "-application", "voip") to "ogg" }
             "flac" -> listOf("-c:a", "flac") to "flac"
             "wav" -> listOf("-c:a", "pcm_s16le") to "wav"
@@ -87,6 +87,21 @@ object Media {
         return vf + enc
     }
 
+    private fun vArgsBitrate(vK: Int, engine: String, height: Int): List<String> {
+        val e = FF.encoders()
+        val vf = listOf("-vf", "scale=-2:min($height\\,ih)")
+        val enc = when {
+            engine == "hw" && "h264_mediacodec" in e -> listOf("-c:v", "h264_mediacodec", "-b:v", "${vK}k")
+            "libx264" in e -> listOf(
+                "-c:v", "libx264", "-preset", "veryfast", "-b:v", "${vK}k", "-maxrate", "${(vK * 1.25).toInt()}k",
+                "-bufsize", "${vK * 2}k", "-pix_fmt", "yuv420p"
+            )
+            "h264_mediacodec" in e -> listOf("-c:v", "h264_mediacodec", "-b:v", "${vK}k")
+            else -> listOf("-c:v", "mpeg4", "-b:v", "${vK}k")
+        }
+        return vf + enc
+    }
+
     private suspend fun one(c: Ctx, i: Int, f: In, label: String, args: List<String>) {
         val n = c.inputs.size
         val tag = if (n > 1) "$label (${i + 1}/$n)" else label
@@ -95,11 +110,48 @@ object Media {
     }
 
     suspend fun vcompress(c: Ctx): List<File> = c.inputs.mapIndexed { i, f ->
-        val out = c.out("${f.base}_compressed.mp4")
-        val args = listOf("-i", f.file.path, "-map", "0:v:0", "-map", "0:a:0?") +
-            vArgs(c.s("level"), c.s("engine"), c.s("res")) + AAC + out.path
-        one(c, i, f, "ضغط الفيديو", args)
-        out
+        if (c.isTarget()) vTarget(c, i, f) else {
+            val out = c.out("${f.base}_compressed.mp4")
+            val args = listOf("-i", f.file.path, "-map", "0:v:0", "-map", "0:a:0?") +
+                vArgs(c.s("level"), c.s("engine"), c.s("res")) + AAC + out.path
+            one(c, i, f, "ضغط الفيديو", args)
+            out
+        }
+    }
+
+    /** ضغط لحجم مستهدف: نحسب البت ريت من المدة، ولو الناتج كبير نعيد مرة بمعامل تصحيح */
+    private suspend fun vTarget(c: Ctx, i: Int, f: In): File {
+        val targetBytes = (c.targetMb() ?: throw IllegalStateException("اكتب الحجم المستهدف")) * 1048576.0
+        val dur = FF.durationOf(f.file)
+        if (dur <= 1.0) throw IllegalStateException("مش قادر أعرف مدة الملف")
+        if (f.file.length() <= targetBytes) {
+            c.note = "الملف أصغر من الحجم المطلوب أصلًا"
+            val o = c.out("${f.base}_compressed.mp4")
+            f.file.copyTo(o)
+            return o
+        }
+        val audioK = 96
+        var factor = 0.95
+        var result: File? = null
+        for (attempt in 1..2) {
+            val totalK = targetBytes * 8.0 * factor / dur / 1000.0
+            val vK = (totalK - audioK).toInt().coerceAtLeast(80)
+            val h = when { vK < 300 -> 360; vK < 700 -> 480; vK < 1600 -> 720; else -> 1080 }
+            val o = c.out("${f.base}_target.mp4")
+            val args = listOf("-i", f.file.path, "-map", "0:v:0", "-map", "0:a:0?") +
+                vArgsBitrate(vK, c.s("engine"), h) +
+                listOf("-c:a", "aac", "-b:a", "${audioK}k", "-movflags", "+faststart", o.path)
+            one(c, i, f, "ضغط لحجم مستهدف (محاولة $attempt)", args)
+            val size = o.length().toDouble()
+            if (size <= targetBytes * 1.03 || attempt == 2) {
+                if (size > targetBytes * 1.03) c.note = "مقدرتش أوصل للحجم المطلوب بالظبط"
+                result = o
+                break
+            }
+            factor *= targetBytes / size * 0.97
+            o.delete()
+        }
+        return result ?: throw IllegalStateException("فشل الضغط")
     }
 
     suspend fun vconvert(c: Ctx): List<File> = c.inputs.mapIndexed { i, f ->
@@ -120,7 +172,15 @@ object Media {
     }
 
     suspend fun toAudio(c: Ctx): List<File> = c.inputs.mapIndexed { i, f ->
-        val (a, ext) = audioArgs(c.s("fmt"), c.s("q"))
+        var kb: Int? = null
+        if (c.isTarget() && c.s("fmt") !in setOf("flac", "wav", "voice")) {
+            val mb = c.targetMb() ?: throw IllegalStateException("اكتب الحجم المستهدف")
+            val dur = FF.durationOf(f.file)
+            if (dur <= 1.0) throw IllegalStateException("مش قادر أعرف مدة الملف")
+            kb = (mb * 1048576.0 * 8.0 * 0.95 / dur / 1000.0).toInt().coerceIn(16, 320)
+            if (kb <= 24) c.note = "الجودة هتبقى منخفضة جدًا عشان الحجم صغير"
+        }
+        val (a, ext) = audioArgs(c.s("fmt"), c.s("q"), kb)
         val out = c.out("${f.base}.$ext")
         one(c, i, f, "معالجة الصوت", listOf("-i", f.file.path, "-vn") + a + out.path)
         out

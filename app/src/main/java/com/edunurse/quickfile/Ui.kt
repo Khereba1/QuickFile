@@ -66,6 +66,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 import java.io.File
 
 private val DarkColors = darkColorScheme(
@@ -180,7 +181,7 @@ fun kindEmoji(k: String) = when (k) { "pdf" -> "📄"; "image" -> "🖼️"; "vi
 // ───────────────────────── الرئيسية ─────────────────────────
 
 @Composable
-fun Home(onOpen: (Tool) -> Unit) {
+fun Home(onHistory: () -> Unit, onOpen: (Tool) -> Unit) {
     var q by remember { mutableStateOf("") }
     var cat by remember { mutableStateOf<Group?>(null) }
     var settings by remember { mutableStateOf(false) }
@@ -195,6 +196,8 @@ fun Home(onOpen: (Tool) -> Unit) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item { Banner { settings = true } }
+        item { MiniJob() }
+        item { RecentSection(onHistory) }
         item {
             OutlinedTextField(
                 value = q, onValueChange = { q = it }, singleLine = true, shape = RoundedCornerShape(18.dp),
@@ -284,6 +287,15 @@ private fun Banner(onSettings: () -> Unit) {
 @Composable
 private fun SettingsDialog(onDismiss: () -> Unit) {
     val ctx = LocalContext.current
+    val treeL = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { u ->
+        if (u != null) {
+            try {
+                ctx.contentResolver.takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            } catch (_: Exception) { }
+            Prefs.saveTree = u.toString()
+            Prefs.save()
+        }
+    }
     val ver = remember { try { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "" } catch (_: Exception) { "" } }
     AlertDialog(
         onDismissRequest = { Prefs.save(); onDismiss() },
@@ -310,6 +322,17 @@ private fun SettingsDialog(onDismiss: () -> Unit) {
                     CatChip("Cairo", Prefs.font == "cairo", raw = true) { Prefs.font = "cairo"; Prefs.save() }
                     CatChip("IBM Plex", Prefs.font == "plex", raw = true) { Prefs.font = "plex"; Prefs.save() }
                     CatChip("Mono", Prefs.font == "mono", raw = true) { Prefs.font = "mono"; Prefs.save() }
+                }
+                SetGroup("مجلد الحفظ") {
+                    CatChip("التنزيلات", Prefs.saveTree.isBlank()) { Prefs.saveTree = ""; Prefs.save() }
+                    CatChip("اختيار مجلد…", Prefs.saveTree.isNotBlank()) { treeL.launch(null) }
+                }
+                if (Prefs.saveTree.isNotBlank()) {
+                    Text(Fs.treeLabel(Prefs.saveTree), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, raw = true)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("حفظ تلقائي بعد كل تحويل", fontSize = 14.sp, modifier = Modifier.weight(1f))
+                    Switch(checked = Prefs.autoSave, onCheckedChange = { Prefs.autoSave = it; Prefs.save() })
                 }
             }
         }
@@ -426,7 +449,8 @@ fun ToolScreen(tool: Tool, initial: List<Picked>, onBack: () -> Unit) {
         }
     }
     val state by Jobs.state.collectAsState()
-    val running = state is JobState.Running
+    val busy = state is JobState.Running
+    val running = false
 
     fun add(uris: List<Uri>) {
         uris.forEach { u ->
@@ -469,6 +493,7 @@ fun ToolScreen(tool: Tool, initial: List<Picked>, onBack: () -> Unit) {
             }
 
             tool.opts.forEachIndexed { idx, o ->
+                if (o.showIf?.invoke(vals) == false) return@forEachIndexed
                 when (o) {
                     is Opt.Choice -> Column(Modifier.enter(idx + 1), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Label(o.label)
@@ -506,9 +531,10 @@ fun ToolScreen(tool: Tool, initial: List<Picked>, onBack: () -> Unit) {
                 onClick = { Jobs.start(ctx, tool, picks.toList(), vals.toMap()) },
                 enabled = !running && need <= 0,
                 shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().height(54.dp)
-            ) { Text(if (need > 0) "اختار $need ملف كمان على الأقل" else "ابدأ", fontSize = 16.sp, fontWeight = FontWeight.Bold) }
+            ) { Text(if (need > 0) "اختار $need ملف كمان على الأقل" else if (busy) "أضف للطابور" else "ابدأ", fontSize = 16.sp, fontWeight = FontWeight.Bold) }
 
             JobPanel(tool, state)
+            QueuePanel()
             Spacer(Modifier.navigationBarsPadding().height(24.dp))
         }
     }
@@ -569,6 +595,14 @@ fun JobPanel(tool: Tool, s: JobState) {
                     TextButton(onClick = { Jobs.reset() }) { Text("إخفاء") }
                 }
                 if (s.note.isNotBlank()) Text(s.note, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (tool.compare && s.inSize > 0L) {
+                    val outTotal = s.files.sumOf { it.length() }
+                    val delta = ((outTotal - s.inSize) * 100.0 / s.inSize).roundToInt()
+                    Text(
+                        "${Fs.size(s.inSize)} → ${Fs.size(outTotal)}  (${if (delta <= 0) "−${-delta}" else "+$delta"}%)",
+                        fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary, raw = true
+                    )
+                }
                 s.files.forEach { f ->
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -581,8 +615,8 @@ fun JobPanel(tool: Tool, s: JobState) {
                 }
                 Button(
                     onClick = {
-                        val ok = s.files.count { Fs.saveToDownloads(ctx, it) }
-                        Toast.makeText(ctx, if (ok == s.files.size) tr("اتحفظ في Download/QuickFile") else tr("فشل حفظ") + ": ${s.files.size - ok}", Toast.LENGTH_LONG).show()
+                        val ok = s.files.count { Fs.save(ctx, it) }
+                        Toast.makeText(ctx, if (ok == s.files.size) tr(if (Prefs.saveTree.isBlank()) "اتحفظ في Download/QuickFile" else "اتحفظ في المجلد المحدد") else tr("فشل حفظ") + ": ${s.files.size - ok}", Toast.LENGTH_LONG).show()
                     },
                     shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()
                 ) { Text(if (s.files.size > 1) "حفظ الكل في التنزيلات" else "حفظ في التنزيلات") }
@@ -592,7 +626,7 @@ fun JobPanel(tool: Tool, s: JobState) {
     }
 }
 
-private fun openFile(ctx: Context, f: File) {
+internal fun openFile(ctx: Context, f: File) {
     try {
         ctx.startActivity(
             Intent(Intent.ACTION_VIEW).setDataAndType(Fs.uriFor(ctx, f), Fs.mime(f))
@@ -603,8 +637,42 @@ private fun openFile(ctx: Context, f: File) {
     }
 }
 
-private fun shareFile(ctx: Context, f: File) {
+internal fun shareFile(ctx: Context, f: File) {
     val i = Intent(Intent.ACTION_SEND).setType(Fs.mime(f)).putExtra(Intent.EXTRA_STREAM, Fs.uriFor(ctx, f))
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     ctx.startActivity(Intent.createChooser(i, "share").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+}
+
+/** شريط تقدم صغير في الرئيسية: يبان لو فيه مهمة شغالة (حتى لو سبت شاشة الأداة) */
+@Composable
+fun MiniJob() {
+    val s by Jobs.state.collectAsState()
+    val q by Jobs.queue.collectAsState()
+    val st = s
+    if (st is JobState.Running) {
+        AppCard {
+            Text(st.label, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            LinearProgressIndicator(progress = { st.progress }, modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(if (q.isNotEmpty()) "+${q.size}" else "", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, raw = true)
+                TextButton(onClick = { Jobs.cancel() }) { Text("إلغاء") }
+            }
+        }
+    }
+}
+
+/** المهام المستنية في الطابور */
+@Composable
+fun QueuePanel() {
+    val q by Jobs.queue.collectAsState()
+    if (q.isEmpty()) return
+    AppCard {
+        Text("في الانتظار", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        q.forEach { j ->
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("${j.tool.emoji}  ${tr(j.tool.title)} · ${j.picks.size}", fontSize = 13.sp, modifier = Modifier.weight(1f), raw = true)
+                IconButton(onClick = { Jobs.removeQueued(j.id) }) { Icon(Icons.Default.Close, contentDescription = "remove") }
+            }
+        }
+    }
 }
