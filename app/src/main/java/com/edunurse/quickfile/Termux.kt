@@ -138,7 +138,9 @@ object Termux {
             }
             if (outs.isEmpty()) {
                 val tail = log.trim().lines().takeLast(6).joinToString("\n").take(500)
-                throw IllegalStateException("التحويل فشل (كود $code):\n$tail")
+                val hint = if (log.contains("could not be loaded", ignoreCase = true))
+                    "\nممكن وحدة LibreOffice (Writer/Impress/Calc) الخاصة بالنوع ده مش متثبتة. جرّب «فحص الجاهزية» من الإعدادات." else ""
+                throw IllegalStateException("التحويل فشل (كود $code):\n$tail$hint")
             }
             return outs
         } finally {

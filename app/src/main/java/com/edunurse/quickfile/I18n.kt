@@ -244,6 +244,7 @@ object I18n {
         "⏱ بداية من هنا" to "⏱ Start here",
         "⏱ نهاية هنا" to "⏱ End here",
         "▶ شغّل من البداية المحددة" to "▶ Play from the chosen start",
+        "ممكن وحدة LibreOffice (Writer/Impress/Calc) الخاصة بالنوع ده مش متثبتة. جرّب «فحص الجاهزية» من الإعدادات." to "A LibreOffice module (Writer/Impress/Calc) for this file type may not be installed. Try “Check readiness” in Settings.",
         "نسخ" to "Copy",
         "الصفحة كلها" to "Select page",
         "نتيجة" to "results",
