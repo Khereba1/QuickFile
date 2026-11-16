@@ -22,6 +22,11 @@ object Prefs {
     /** مجلد الحفظ المختار (SAF tree uri) أو فاضي = التنزيلات */
     var saveTree by mutableStateOf("")
     var autoSave by mutableStateOf(false)
+    /** وضع Termux المتقدم (تجريبي) */
+    var termux by mutableStateOf(false)
+    /** base | ubuntu */
+    var termuxEnv by mutableStateOf("ubuntu")
+    var termuxDir by mutableStateOf("")
 
     fun init(ctx: Context) {
         val s = ctx.getSharedPreferences("qf", Context.MODE_PRIVATE)
@@ -32,6 +37,9 @@ object Prefs {
         textScale = s.getFloat("ts", 1f)
         saveTree = s.getString("tree", "") ?: ""
         autoSave = s.getBoolean("auto", false)
+        termux = s.getBoolean("termux", false)
+        termuxEnv = s.getString("tenv", "ubuntu") ?: "ubuntu"
+        termuxDir = s.getString("tdir", "") ?: ""
     }
 
     fun setLanguage(l: String) {
@@ -48,6 +56,9 @@ object Prefs {
             ?.putFloat("ts", textScale)
             ?.putString("tree", saveTree)
             ?.putBoolean("auto", autoSave)
+            ?.putBoolean("termux", termux)
+            ?.putString("tenv", termuxEnv)
+            ?.putString("tdir", termuxDir)
             ?.apply()
     }
 }

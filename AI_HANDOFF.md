@@ -32,6 +32,12 @@ Only core Material icons are used (material-icons-core); tool icons are emojis.
 - Exe.kt + app/src/main/python/{flip_exe_to_pdf.py, exe_bridge.py}: exe flip-book converter. Kotlin calls
   `exe_bridge.run(src, dst, level, cb)` through Chaquopy; `cb` is the public `ExeCallback` class (progress/cancelled).
   flip_exe_to_pdf.py is the owner's tested module: keep it identical to reference/flip_exe_to_pdf.py.
+- Termux.kt (+ assets/termux/*.sh): EXPERIMENTAL optional bridge (Prefs.termux, default OFF; tools with `Tool.advanced = true` and `Group.TERMUX` are hidden otherwise).
+  Flow: copy inputs into a job folder inside a user-picked SAF "exchange folder" (primary storage only), write run.sh from run_wrapper.sh,
+  send the `com.termux.RUN_COMMAND` intent (background) either to bash (env "base") or to `proot-distro login ubuntu --bind <job>:/qf -- bash /qf/run.sh`
+  (env "ubuntu"), poll started.txt / done.txt through SAF, copy out/ back, delete the job folder. Needs permission com.termux.permission.RUN_COMMAND,
+  `allow-external-apps=true` in Termux, and Termux storage access. Tools: docconv (LibreOffice --convert-to), pdf2docx (writer_pdf_import). Never claim this was tested.
+- ToolPreview.kt: `InlinePlayer` (VideoView) shown inside ToolScreen for video/audio tools; in the cut tool it can set start/end from the playback position.
 - History.kt: persisted recent results (SharedPreferences JSON, max 30 files / 1.5 GB, files live in filesDir/out/<stamp>), Home 'recent' section and HistoryScreen.
 - Options can be conditional: `Opt.showIf`. Compression tools share `targetOpts()` (mode level|target, mb, mbc) and `Ctx.isTarget()/targetMb()`;
   PDF target = binary search over `PDF_LEVELS`, video target = bitrate from duration (+1 retry), audio target = bitrate clamp 16-320k. `Tool.compare` shows before/after size.

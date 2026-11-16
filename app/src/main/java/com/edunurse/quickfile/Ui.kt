@@ -5,6 +5,7 @@ package com.edunurse.quickfile
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -53,9 +54,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -66,6 +69,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import java.io.File
 
@@ -176,7 +180,7 @@ fun TopBar(title: String, emoji: String?, color: Color?, onBack: () -> Unit, raw
     }
 }
 
-fun kindEmoji(k: String) = when (k) { "pdf" -> "📄"; "image" -> "🖼️"; "video" -> "🎞️"; "audio" -> "🎵"; "exe" -> "📖"; else -> "📁" }
+fun kindEmoji(k: String) = when (k) { "pdf" -> "📄"; "image" -> "🖼️"; "video" -> "🎞️"; "audio" -> "🎵"; "exe" -> "📖"; "office" -> "📝"; else -> "📁" }
 
 // ───────────────────────── الرئيسية ─────────────────────────
 
@@ -186,7 +190,7 @@ fun Home(onHistory: () -> Unit, onOpen: (Tool) -> Unit) {
     var cat by remember { mutableStateOf<Group?>(null) }
     var settings by remember { mutableStateOf(false) }
     val filtered = TOOLS.filter {
-        (cat == null || it.group == cat) &&
+        (!it.advanced || Prefs.termux) && (cat == null || it.group == cat) &&
             (q.isBlank() || tr(it.title).contains(q, true) || tr(it.sub).contains(q, true) || it.title.contains(q, true))
     }
     if (settings) SettingsDialog { settings = false }
@@ -210,7 +214,7 @@ fun Home(onHistory: () -> Unit, onOpen: (Tool) -> Unit) {
         item {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.enter(2)) {
                 item { CatChip("الكل", cat == null) { cat = null } }
-                items(Group.values().toList()) { g -> CatChip(g.title, cat == g) { cat = if (cat == g) null else g } }
+                items(Group.values().filter { it != Group.TERMUX || Prefs.termux }) { g -> CatChip(g.title, cat == g) { cat = if (cat == g) null else g } }
             }
         }
         var order = 3
@@ -296,6 +300,23 @@ private fun SettingsDialog(onDismiss: () -> Unit) {
             Prefs.save()
         }
     }
+    val scope = rememberCoroutineScope()
+    val clipboard = LocalClipboardManager.current
+    var report by remember { mutableStateOf<String?>(null) }
+    var checking by remember { mutableStateOf(false) }
+    val permL = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    val tDirL = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { u ->
+        if (u != null) {
+            val primary = try { DocumentsContract.getTreeDocumentId(u).startsWith("primary:") } catch (_: Exception) { false }
+            if (!primary) {
+                Toast.makeText(ctx, tr("مجلد التبادل لازم يكون في الذاكرة الداخلية"), Toast.LENGTH_LONG).show()
+            } else {
+                try { ctx.contentResolver.takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) } catch (_: Exception) { }
+                Prefs.termuxDir = u.toString()
+                Prefs.save()
+            }
+        }
+    }
     val ver = remember { try { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "" } catch (_: Exception) { "" } }
     AlertDialog(
         onDismissRequest = { Prefs.save(); onDismiss() },
@@ -333,6 +354,39 @@ private fun SettingsDialog(onDismiss: () -> Unit) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("حفظ تلقائي بعد كل تحويل", fontSize = 14.sp, modifier = Modifier.weight(1f))
                     Switch(checked = Prefs.autoSave, onCheckedChange = { Prefs.autoSave = it; Prefs.save() })
+                }
+                SetGroup("Termux (تجريبي)") {
+                    CatChip("متوقف", !Prefs.termux) { Prefs.termux = false; Prefs.save() }
+                    CatChip("مفعّل", Prefs.termux) { Prefs.termux = true; Prefs.save() }
+                }
+                if (Prefs.termux) {
+                    SetGroup("البيئة") {
+                        CatChip("Termux الأساسي", Prefs.termuxEnv == "base") { Prefs.termuxEnv = "base"; Prefs.save() }
+                        CatChip("Ubuntu (proot-distro)", Prefs.termuxEnv == "ubuntu", raw = true) { Prefs.termuxEnv = "ubuntu"; Prefs.save() }
+                    }
+                    SetGroup("مجلد التبادل") {
+                        CatChip("اختيار مجلد…", Prefs.termuxDir.isNotBlank()) { tDirL.launch(null) }
+                    }
+                    if (Prefs.termuxDir.isNotBlank()) {
+                        Text(Fs.treeLabel(Prefs.termuxDir), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, raw = true)
+                    }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = { permL.launch(Termux.PERM) }) { Text("منح إذن Termux", fontSize = 13.sp) }
+                        TextButton(onClick = {
+                            clipboard.setText(AnnotatedString(Termux.setupCommands(Prefs.termuxEnv)))
+                            Toast.makeText(ctx, tr("اتنسخت أوامر الإعداد، الصقها في Termux"), Toast.LENGTH_LONG).show()
+                        }) { Text("نسخ أوامر الإعداد", fontSize = 13.sp) }
+                        TextButton(enabled = !checking, onClick = {
+                            scope.launch {
+                                checking = true
+                                report = try { Termux.check(ctx) } catch (e: Throwable) { e.message ?: "error" }
+                                checking = false
+                            }
+                        }) { Text("فحص الجاهزية", fontSize = 13.sp) }
+                    }
+                    if (checking) Text("جاري الفحص…", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    report?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    Text("تجريبي: لو حصلت مشكلة عطّله من هنا", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -377,7 +431,7 @@ private fun ToolCard(t: Tool, modifier: Modifier, onClick: () -> Unit) {
 fun ChooserScreen(files: List<Picked>, onBack: () -> Unit, onPick: (Tool, List<Picked>) -> Unit) {
     val kind = files.first().kind
     val use = files.filter { it.kind == kind }
-    val tools = TOOLS.filter { it.accepts(if (kind == "other") "exe" else kind) }
+    val tools = TOOLS.filter { it.accepts(if (kind == "other") "exe" else kind) && (!it.advanced || Prefs.termux) }
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         TopBar("اختار الأداة", "🧰", null, onBack)
@@ -451,6 +505,7 @@ fun ToolScreen(tool: Tool, initial: List<Picked>, onBack: () -> Unit) {
     val state by Jobs.state.collectAsState()
     val busy = state is JobState.Running
     val running = false
+    var previewIdx by remember(tool.id) { mutableIntStateOf(0) }
 
     fun add(uris: List<Uri>) {
         uris.forEach { u ->
@@ -475,7 +530,7 @@ fun ToolScreen(tool: Tool, initial: List<Picked>, onBack: () -> Unit) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(kindEmoji(p.kind), fontSize = 20.sp, raw = true)
                         Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
+                        Column(Modifier.weight(1f).clickable { previewIdx = i }) {
                             Text(p.name, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, raw = true)
                             Text(Fs.size(p.size), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, raw = true)
                         }
@@ -490,6 +545,11 @@ fun ToolScreen(tool: Tool, initial: List<Picked>, onBack: () -> Unit) {
                     onClick = { if (tool.multi) multiL.launch(tool.mimes) else oneL.launch(tool.mimes) },
                     enabled = !running, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()
                 ) { Text(if (picks.isEmpty()) "اختار ملف" else if (tool.multi) "إضافة ملفات" else "تغيير الملف") }
+            }
+
+            val mp = picks.getOrNull(previewIdx.coerceIn(0, (picks.size - 1).coerceAtLeast(0)))
+            if (mp != null && (mp.kind == "video" || mp.kind == "audio") && (tool.group == Group.VIDEO || tool.group == Group.AUDIO)) {
+                key(mp.uri) { InlinePlayer(mp, tool.id == "cut", vals) }
             }
 
             tool.opts.forEachIndexed { idx, o ->

@@ -8,7 +8,8 @@ enum class Group(val title: String, val color: Long) {
     AUDIO("صوت", 0xFFB7A4F5),
     PDF("PDF", 0xFFFF7B8A),
     IMAGE("صور", 0xFF6FD3A6),
-    OCR("استخراج النص", 0xFF6CB6FF)
+    OCR("استخراج النص", 0xFF6CB6FF),
+    TERMUX("متقدم (Termux)", 0xFFFFD166)
 }
 
 sealed class Opt(val key: String, val label: String, val showIf: ((Map<String, String>) -> Boolean)? = null) {
@@ -61,6 +62,8 @@ class Tool(
     val ordered: Boolean = false,
     val opts: List<Opt> = emptyList(),
     val compare: Boolean = false,
+    val advanced: Boolean = false,
+    val kinds: Set<String>? = null,
     val special: String? = null,
     val exec: suspend (Ctx) -> List<File> = { emptyList() }
 )
@@ -69,6 +72,7 @@ fun kindOf(name: String, mime: String?): String {
     val ext = name.substringAfterLast('.', "").lowercase()
     return when {
         ext == "exe" || mime in setOf("application/x-msdownload", "application/x-dosexec", "application/vnd.microsoft.portable-executable", "application/x-ms-dos-executable") -> "exe"
+        ext in setOf("doc", "docx", "ppt", "pptx", "xls", "xlsx", "odt", "odp", "ods", "rtf") || mime?.startsWith("application/vnd.openxmlformats") == true || mime?.startsWith("application/vnd.oasis.opendocument") == true || mime == "application/msword" || mime == "application/vnd.ms-powerpoint" || mime == "application/vnd.ms-excel" -> "office"
         ext == "pdf" || mime == "application/pdf" -> "pdf"
         ext in setOf("jpg", "jpeg", "png", "webp", "bmp", "gif", "heic") || mime?.startsWith("image/") == true -> "image"
         ext in setOf("mp4", "mkv", "webm", "mov", "avi", "3gp", "m4v", "ts") || mime?.startsWith("video/") == true -> "video"
@@ -77,13 +81,14 @@ fun kindOf(name: String, mime: String?): String {
     }
 }
 
-fun Tool.accepts(kind: String): Boolean = mimes.any {
+fun Tool.accepts(kind: String): Boolean = kinds?.contains(kind) ?: mimes.any {
     when (it) {
         "application/pdf" -> kind == "pdf"
         "image/*" -> kind == "image"
         "video/*" -> kind == "video"
         "audio/*" -> kind == "audio"
         "*/*" -> kind == "exe"
+        "office/*" -> kind == "office"
         else -> false
     }
 }
@@ -201,6 +206,13 @@ val TOOLS: List<Tool> = listOf(
         Opt.Choice("q", "الجودة", listOf("90" to "عالية", "75" to "متوسطة", "55" to "صغيرة"), "75"),
         Opt.Choice("max", "أكبر بُعد", listOf("0" to "الأصلي", "2560" to "2560", "1600" to "1600", "1024" to "1024"), "0")
     ), exec = { Pdf.convertImages(it) }),
+
+    Tool("docconv", "تحويل مستند Office (تجريبي)", "Word / PowerPoint / Excel إلى PDF أو بين الصيغ، عبر Termux", "📝", Group.TERMUX, arrayOf("*/*"), true, advanced = true, kinds = setOf("office"),
+        opts = listOf(Opt.Choice("to", "التحويل إلى", listOf("pdf" to "PDF", "docx" to "Word", "odt" to "ODT", "pptx" to "PowerPoint", "xlsx" to "Excel", "txt" to "نص", "html" to "HTML"), "pdf")),
+        exec = { Office.convert(it, false) }),
+
+    Tool("pdf2docx", "PDF إلى Word (جودة محدودة)", "تحويل تقريبي عبر Termux، التنسيق مش مضمون", "📄", Group.TERMUX, PDFM, true, advanced = true,
+        exec = { Office.convert(it, true) }),
 
     Tool("ocr", "OCR: PDF قابل للبحث", "حوّل الممسوح لنص عربي/إنجليزي ويطلع PDF وTXT", "🔍", Group.OCR, PDF_IMG, true, opts = listOf(
         Opt.Choice("lang", "اللغة", listOf("ara+eng" to "عربي + إنجليزي", "eng" to "إنجليزي", "ara" to "عربي"), "ara+eng"),
