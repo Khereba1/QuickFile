@@ -11,8 +11,8 @@ android {
         applicationId = "com.edunurse.quickfile"
         minSdk = 29
         targetSdk = 34
-        versionCode = 8
-        versionName = "1.5.1"
+        versionCode = 9
+        versionName = "1.6"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
     val ksPath = System.getenv("KEYSTORE_PATH")

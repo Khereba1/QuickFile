@@ -5,6 +5,7 @@ import com.arthenica.ffmpegkit.FFprobeKit
 import com.arthenica.ffmpegkit.ReturnCode
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
+import java.util.Locale
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -211,6 +212,47 @@ object Media {
         c.progress(0f, "قص المقطع")
         FF.exec(args, dur) { p -> c.progress(p, "قص المقطع") }
         return listOf(out)
+    }
+
+    /** يلقط الشرايح من فيديو محاضرة ويبنيها PDF */
+    suspend fun slides(c: Ctx): List<File> = c.inputs.mapIndexed { i, f ->
+        val dir = File(c.outDir, ".frames_$i").also { it.mkdirs() }
+        val vf = if (c.s("mode") == "interval") {
+            "fps=1/${c.s("every").ifBlank { "10" }},scale=1280:-2"
+        } else {
+            val th = when (c.s("sens")) { "low" -> "0.15"; "high" -> "0.03"; else -> "0.06" }
+            "select=gt(scene\\,$th)+eq(n\\,0),scale=1280:-2"
+        }
+        val args = listOf("-i", f.file.path, "-vf", vf, "-fps_mode", "vfr", "-q:v", "4", File(dir, "f_%04d.jpg").path)
+        one(c, i, f, "استخراج الشرايح", args)
+        val frames = (dir.listFiles()?.filter { it.extension == "jpg" } ?: emptyList()).sortedBy { it.name }
+        if (frames.isEmpty()) throw IllegalStateException("مالقيتش شرايح. جرّب حساسية أعلى أو طريقة «كل فترة ثابتة»")
+        c.progress((i + 0.9f) / c.inputs.size, "بناء الـ PDF…")
+        val out = c.out("${f.base}_slides.pdf")
+        Pdf.framesToPdf(c.app, frames, out)
+        dir.deleteRecursively()
+        out
+    }
+
+    /** تسريع / حذف صمت / تقليل ضوضاء / توحيد مستوى الصوت */
+    suspend fun tune(c: Ctx): List<File> = c.inputs.mapIndexed { i, f ->
+        val speed = c.s("speed").toDoubleOrNull() ?: 1.0
+        val filters = ArrayList<String>()
+        if (c.on("denoise")) filters.add("afftdn=nf=-25")
+        if (c.on("silence")) filters.add("silenceremove=start_periods=1:start_threshold=-45dB:stop_periods=-1:stop_duration=0.6:stop_threshold=-45dB")
+        var s = speed
+        while (s > 2.0 + 1e-6) { filters.add("atempo=2.0"); s /= 2.0 }
+        if (Math.abs(s - 1.0) > 1e-6) filters.add("atempo=" + "%.3f".format(Locale.US, s))
+        if (c.on("norm")) filters.add("dynaudnorm")
+        val (a, ext) = audioArgs(c.s("fmt"), c.s("q"))
+        val out = c.out("${f.base}_tuned.$ext")
+        val args = listOf("-i", f.file.path, "-vn") +
+            (if (filters.isEmpty()) emptyList() else listOf("-af", filters.joinToString(","))) + a + out.path
+        val n = c.inputs.size
+        val tag = if (n > 1) "${tr("تعديل الصوت")} (${i + 1}/$n)" else "تعديل الصوت"
+        c.progress(i.toFloat() / n, tag)
+        FF.exec(args, FF.durationOf(f.file) / speed) { p -> c.progress((i + p) / n, tag) }
+        out
     }
 
     private fun dims(f: File): Pair<Int, Int> = try {

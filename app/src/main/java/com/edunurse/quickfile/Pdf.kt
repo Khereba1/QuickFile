@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.pdf.PdfRenderer
@@ -407,6 +409,127 @@ object Pdf {
             }
             o
         }
+    }
+
+    /** يبني PDF من صور (شرايح من فيديو) بمقاس 16:9 تقريبًا */
+    fun framesToPdf(ctx: Context, frames: List<File>, out: File) {
+        ensure(ctx)
+        val doc = PDDocument()
+        try {
+            for (f in frames) {
+                val bmp = Img.decode(f, 1600)
+                val W = 842f
+                val H = W * bmp.height / bmp.width
+                val page = PDPage(PDRectangle(W, H))
+                doc.addPage(page)
+                val img = JPEGFactory.createFromImage(doc, bmp, 0.75f)
+                PDPageContentStream(doc, page).use { it.drawImage(img, 0f, 0f, W, H) }
+                bmp.recycle()
+            }
+            doc.save(out)
+        } finally { doc.close() }
+    }
+
+    /** قص الهوامش (بالمليمتر) من الصفحات */
+    fun crop(c: Ctx): List<File> = c.inputs.mapIndexed { fi, f ->
+        ensure(c.app)
+        fun mm(k: String): Float = ((c.s(k).replace(',', '.').toDoubleOrNull() ?: 0.0) * 72.0 / 25.4).toFloat()
+        val top = mm("top")
+        val bottom = mm("bottom")
+        val left = mm("left")
+        val right = mm("right")
+        c.progress(fi.toFloat() / c.inputs.size, "قص ${f.name}")
+        val doc = PDDocument.load(f.file)
+        try {
+            for (pg in ranges(c.s("pages"), doc.numberOfPages)) {
+                val page = doc.getPage(pg - 1)
+                val mb = page.mediaBox
+                val w = mb.width - left - right
+                val h = mb.height - top - bottom
+                if (w < 20f || h < 20f) throw IllegalStateException("الهوامش كبيرة أوي")
+                val rect = PDRectangle(mb.lowerLeftX + left, mb.lowerLeftY + bottom, w, h)
+                page.cropBox = rect
+                page.mediaBox = rect
+            }
+            val o = c.out("${f.base}_cropped.pdf")
+            doc.save(o)
+            o
+        } finally { doc.close() }
+    }
+
+    /** رمادي أو أبيض وأسود للطباعة (الصفحات بتتحوّل لصور) */
+    fun blackWhite(c: Ctx): List<File> = c.inputs.mapIndexed { fi, f ->
+        ensure(c.app)
+        val dpi = c.s("dpi").toIntOrNull() ?: 150
+        val bw = c.s("mode") == "bw"
+        val pfd = ParcelFileDescriptor.open(f.file, ParcelFileDescriptor.MODE_READ_ONLY)
+        val r = PdfRenderer(pfd)
+        val doc = PDDocument()
+        try {
+            val n = r.pageCount
+            for (i in 0 until n) {
+                c.progress((fi + i.toFloat() / n) / c.inputs.size, "صفحة ${i + 1}/$n")
+                val src = render(r, i, dpi)
+                val dst = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+                val cm = ColorMatrix()
+                cm.setSaturation(0f)
+                if (bw) {
+                    val k = 4f
+                    val t = -128f * (k - 1f)
+                    cm.postConcat(ColorMatrix(floatArrayOf(k, 0f, 0f, 0f, t, 0f, k, 0f, 0f, t, 0f, 0f, k, 0f, t, 0f, 0f, 0f, 1f, 0f)))
+                }
+                val paint = Paint()
+                paint.colorFilter = ColorMatrixColorFilter(cm)
+                Canvas(dst).drawBitmap(src, 0f, 0f, paint)
+                src.recycle()
+                val wPt = dst.width * 72f / dpi
+                val hPt = dst.height * 72f / dpi
+                val page = PDPage(PDRectangle(wPt, hPt))
+                doc.addPage(page)
+                val img = JPEGFactory.createFromImage(doc, dst, if (bw) 0.6f else 0.7f)
+                PDPageContentStream(doc, page).use { it.drawImage(img, 0f, 0f, wPt, hPt) }
+                dst.recycle()
+            }
+            val o = c.out("${f.base}_${if (bw) "bw" else "gray"}.pdf")
+            doc.save(o)
+            o
+        } finally { r.close(); pfd.close(); doc.close() }
+    }
+
+    /** يطلّع الصور اللي جوه الـ PDF */
+    fun extractImages(c: Ctx): List<File> {
+        ensure(c.app)
+        val png = c.s("fmt") == "png"
+        val outs = ArrayList<File>()
+        for ((fi, f) in c.inputs.withIndex()) {
+            val doc = PDDocument.load(f.file)
+            try {
+                val seen = HashSet<Any>()
+                val pages = doc.numberOfPages
+                var pi = 0
+                for (page in doc.pages) {
+                    pi++
+                    c.progress((fi + pi.toFloat() / pages) / c.inputs.size, "صفحة $pi/$pages")
+                    val res = page.resources ?: continue
+                    var k = 0
+                    for (name in res.xObjectNames.toList()) {
+                        try {
+                            val x = res.getXObject(name)
+                            if (x !is PDImageXObject || x.isStencil) continue
+                            if (!seen.add(x.cosObject)) continue
+                            val bmp = x.image ?: continue
+                            if (bmp.width < 80 || bmp.height < 80) continue
+                            k++
+                            val o = c.out("${f.base}_p${pi}_$k.${if (png) "png" else "jpg"}")
+                            FileOutputStream(o).use { bmp.compress(if (png) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG, 92, it) }
+                            outs.add(o)
+                        } catch (_: Throwable) { }
+                    }
+                }
+            } finally { doc.close() }
+        }
+        if (outs.isEmpty()) throw IllegalStateException("مفيش صور جوه الملف")
+        return outs
     }
 
     fun toImages(c: Ctx): List<File> {

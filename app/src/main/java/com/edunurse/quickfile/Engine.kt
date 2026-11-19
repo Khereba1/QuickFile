@@ -175,6 +175,7 @@ object Jobs {
                 throw e
             } catch (e: Throwable) {
                 outDir.deleteRecursively()
+                ErrLog.add(q.tool.id, e.message ?: e.javaClass.simpleName, e)
                 state.value = JobState.Failed(q.tool.id, (e.message ?: e.javaClass.simpleName).take(500))
             } finally {
                 work.deleteRecursively()

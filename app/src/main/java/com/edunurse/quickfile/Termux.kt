@@ -6,7 +6,10 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Environment
 import android.provider.DocumentsContract
+import androidx.compose.runtime.mutableStateListOf
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -36,6 +39,11 @@ object Termux {
         }
     }
 
+    /** أدوات إضافية اختيارية: Ghostscript وocrmypdf وpandoc */
+    fun extrasCommands(env: String): String =
+        if (env == "ubuntu") "proot-distro login ubuntu -- bash -c \"apt update && apt install -y ghostscript ocrmypdf tesseract-ocr-ara tesseract-ocr-eng pandoc\"\n"
+        else "pkg install -y ghostscript pandoc\n"
+
     private fun docUri(tree: Uri, id: String): Uri = DocumentsContract.buildDocumentUriUsingTree(tree, id)
 
     private fun create(ctx: Context, tree: Uri, parentId: String, mime: String, name: String): String {
@@ -64,6 +72,63 @@ object Termux {
 
     private fun mmss(sec: Long) = "%d:%02d".format(sec / 60, sec % 60)
 
+    /** يمسح مجلدات المهام القديمة اللي فضلت بعد إغلاق التطبيق فجأة */
+    fun cleanup(ctx: Context) {
+        try {
+            val tree = Uri.parse(Prefs.termuxDir)
+            val rootId = DocumentsContract.getTreeDocumentId(tree)
+            val now = System.currentTimeMillis()
+            for ((id, name, mime) in children(ctx, tree, rootId)) {
+                if (mime != DocumentsContract.Document.MIME_TYPE_DIR || !name.startsWith("job_")) continue
+                val t = name.removePrefix("job_").toLongOrNull() ?: continue
+                if (now - t > 6 * 3600 * 1000L) DocumentsContract.deleteDocument(ctx.contentResolver, docUri(tree, id))
+            }
+        } catch (_: Exception) { }
+    }
+
+    /** يدوّر على سكريبتات *.sh جوه مجلد scripts في مجلد التبادل ويحوّلها لأدوات */
+    fun scanScripts(ctx: Context): List<Tool> {
+        val tree = Uri.parse(Prefs.termuxDir)
+        val rootId = DocumentsContract.getTreeDocumentId(tree)
+        val dir = children(ctx, tree, rootId).firstOrNull { it.second == "scripts" && it.third == DocumentsContract.Document.MIME_TYPE_DIR }
+            ?: return emptyList()
+        val out = ArrayList<Tool>()
+        for ((id, name, mime) in children(ctx, tree, dir.first)) {
+            if (mime == DocumentsContract.Document.MIME_TYPE_DIR || !name.endsWith(".sh")) continue
+            val text = readText(ctx, tree, id)
+            if (text.isNotBlank() && text.length < 200_000) out.add(parseTool(name, text))
+        }
+        return out
+    }
+
+    private fun parseTool(file: String, text: String): Tool {
+        val meta = HashMap<String, String>()
+        val re = Regex("^#\\s*qf:(\\w+)=(.*)$")
+        for (l in text.lineSequence().take(40)) {
+            re.find(l.trim())?.let { m -> meta[m.groupValues[1]] = m.groupValues[2].trim() }
+        }
+        val tokens = (meta["accept"] ?: "any").split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+        val any = tokens.isEmpty() || "any" in tokens
+        val kinds: Set<String> = if (any) setOf("pdf", "image", "video", "audio", "office", "exe", "other") else tokens.toSet()
+        val mimeList = tokens.mapNotNull {
+            when (it) { "pdf" -> "application/pdf"; "image" -> "image/*"; "video" -> "video/*"; "audio" -> "audio/*"; else -> null }
+        }
+        val mimes = if (any || "office" in tokens || mimeList.isEmpty()) arrayOf("*/*") else mimeList.toTypedArray()
+        val arg = meta["arg"]
+        val opts: List<Opt> = if (arg != null) {
+            val parts = arg.split("|")
+            listOf(Opt.Text("arg", parts[0].trim(), "", parts.getOrElse(1) { "" }.trim()))
+        } else emptyList()
+        return Tool(
+            "custom_$file", meta["name"] ?: file.removeSuffix(".sh"), meta["desc"] ?: file, meta["emoji"] ?: "🧩",
+            Group.TERMUX, mimes, meta["multi"] != "false", opts = opts, advanced = true, kinds = kinds,
+            exec = { c ->
+                val prefix = if (arg != null) "ARG='" + c.s("arg").replace("'", "'\\''") + "'\nexport ARG\n" else ""
+                exec(c.app, prefix + text, c.inputs.map { it.file }, c.outDir) { p, l -> c.progress(p, l) }
+            }
+        )
+    }
+
     /** يشغّل `body` (سكريبت shell بيشتغل جوه مجلد المهمة: in/ للمدخلات و out/ للمخرجات) ويرجّع ملفات out/ */
     suspend fun exec(ctx: Context, body: String, inputs: List<File>, outDir: File, progress: (Float, String) -> Unit): List<File> {
         if (!installed(ctx)) throw IllegalStateException("Termux مش متثبت على الموبايل")
@@ -72,6 +137,7 @@ object Termux {
         val tree = Uri.parse(Prefs.termuxDir)
         val rootId = DocumentsContract.getTreeDocumentId(tree)
         if (!rootId.startsWith("primary:")) throw IllegalStateException("مجلد التبادل لازم يكون في الذاكرة الداخلية")
+        cleanup(ctx)
         val jobName = "job_" + System.currentTimeMillis()
         val jobId = create(ctx, tree, rootId, DocumentsContract.Document.MIME_TYPE_DIR, jobName)
         try {
@@ -166,4 +232,27 @@ object Office {
         c.progress(0f, "تحويل عبر Termux…")
         return Termux.exec(c.app, body, c.inputs.map { it.file }, c.outDir) { p, l -> c.progress(p, l) }
     }
+}
+
+/** تشغيل أي سكريبت جاهز من assets/termux مع استبدال قيم الاختيارات */
+suspend fun Office.script(c: Ctx, asset: String, repl: Map<String, String>): List<File> {
+    var body = c.app.assets.open("termux/$asset").bufferedReader().use { it.readText() }
+    for ((k, v) in repl) body = body.replace(k, v)
+    c.progress(0f, "تحويل عبر Termux…")
+    return Termux.exec(c.app, body, c.inputs.map { it.file }, c.outDir) { p, l -> c.progress(p, l) }
+}
+
+/** أدوات جاية من سكريبتات المستخدم */
+object Custom {
+    val tools = mutableStateListOf<Tool>()
+
+    suspend fun refresh(ctx: Context) {
+        val found: List<Tool> = withContext(Dispatchers.IO) {
+            if (!Prefs.termux || Prefs.termuxDir.isBlank()) emptyList<Tool>()
+            else try { Termux.cleanup(ctx); Termux.scanScripts(ctx) } catch (_: Exception) { emptyList<Tool>() }
+        }
+        withContext(Dispatchers.Main) { tools.clear(); tools.addAll(found) }
+    }
+
+    fun example(ctx: Context): String = ctx.assets.open("termux/example_script.sh").bufferedReader().use { it.readText() }
 }

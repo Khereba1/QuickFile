@@ -189,7 +189,7 @@ fun Home(onHistory: () -> Unit, onOpen: (Tool) -> Unit) {
     var q by remember { mutableStateOf("") }
     var cat by remember { mutableStateOf<Group?>(null) }
     var settings by remember { mutableStateOf(false) }
-    val filtered = TOOLS.filter {
+    val filtered = allTools().filter {
         (!it.advanced || Prefs.termux) && (cat == null || it.group == cat) &&
             (q.isBlank() || tr(it.title).contains(q, true) || tr(it.sub).contains(q, true) || it.title.contains(q, true))
     }
@@ -304,7 +304,8 @@ private fun SettingsDialog(onDismiss: () -> Unit) {
     val clipboard = LocalClipboardManager.current
     var report by remember { mutableStateOf<String?>(null) }
     var checking by remember { mutableStateOf(false) }
-    val permL = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    var permTick by remember { mutableIntStateOf(0) }
+    val permL = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { permTick++ }
     val tDirL = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { u ->
         if (u != null) {
             val primary = try { DocumentsContract.getTreeDocumentId(u).startsWith("primary:") } catch (_: Exception) { false }
@@ -385,8 +386,43 @@ private fun SettingsDialog(onDismiss: () -> Unit) {
                         }) { Text("فحص الجاهزية", fontSize = 13.sp) }
                     }
                     if (checking) Text("جاري الفحص…", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    report?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    val pt = permTick
+                    CheckRow(Termux.installed(ctx), "Termux متثبت")
+                    CheckRow(Termux.hasPerm(ctx) && pt >= 0, "إذن تشغيل الأوامر")
+                    CheckRow(Prefs.termuxDir.isNotBlank(), "مجلد التبادل")
+                    val info = parseReport(report.orEmpty())
+                    if (info.isNotEmpty()) {
+                        fun has(k: String) = info[k]?.let { it.isNotEmpty() && it != "-" } == true
+                        CheckRow(has("soffice") || has("libreoffice"), "LibreOffice" + (info["modules"]?.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: ""))
+                        CheckRow(has("gs"), "Ghostscript")
+                        CheckRow(has("ocrmypdf"), "ocrmypdf")
+                        CheckRow(has("pandoc"), "pandoc")
+                    }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = {
+                            clipboard.setText(AnnotatedString(Termux.extrasCommands(Prefs.termuxEnv)))
+                            Toast.makeText(ctx, tr("اتنسخت أوامر الإضافات، الصقها في Termux"), Toast.LENGTH_LONG).show()
+                        }) { Text("نسخ أوامر الإضافات", fontSize = 13.sp) }
+                        TextButton(onClick = {
+                            scope.launch {
+                                Custom.refresh(ctx)
+                                Toast.makeText(ctx, "${Custom.tools.size} " + tr("أداة من السكريبتات"), Toast.LENGTH_SHORT).show()
+                            }
+                        }) { Text("تحديث أدوات السكريبتات", fontSize = 13.sp) }
+                        TextButton(onClick = {
+                            clipboard.setText(AnnotatedString(Custom.example(ctx)))
+                            Toast.makeText(ctx, tr("اتنسخ مثال السكريبت"), Toast.LENGTH_LONG).show()
+                        }) { Text("نسخ مثال سكريبت", fontSize = 13.sp) }
+                    }
+                    Text("${Custom.tools.size} " + tr("أداة من السكريبتات"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("تجريبي: لو حصلت مشكلة عطّله من هنا", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { ErrLog.share(ctx) }) { Text("تصدير سجل الأخطاء", fontSize = 13.sp) }
+                    TextButton(onClick = {
+                        ErrLog.clear()
+                        Toast.makeText(ctx, tr("اتمسح السجل"), Toast.LENGTH_SHORT).show()
+                    }) { Text("مسح السجل", fontSize = 13.sp) }
                 }
             }
         }
@@ -431,7 +467,7 @@ private fun ToolCard(t: Tool, modifier: Modifier, onClick: () -> Unit) {
 fun ChooserScreen(files: List<Picked>, onBack: () -> Unit, onPick: (Tool, List<Picked>) -> Unit) {
     val kind = files.first().kind
     val use = files.filter { it.kind == kind }
-    val tools = TOOLS.filter { it.accepts(if (kind == "other") "exe" else kind) && (!it.advanced || Prefs.termux) }
+    val tools = allTools().filter { it.accepts(if (kind == "other") "exe" else kind) && (!it.advanced || Prefs.termux) }
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         TopBar("اختار الأداة", "🧰", null, onBack)
@@ -736,3 +772,19 @@ fun QueuePanel() {
         }
     }
 }
+
+@Composable
+private fun CheckRow(ok: Boolean, label: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            if (ok) "✓" else "✗", fontWeight = FontWeight.Bold, raw = true,
+            color = if (ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+        )
+        Text(label, fontSize = 13.sp)
+    }
+}
+
+private fun parseReport(r: String): Map<String, String> = r.lines().mapNotNull { l ->
+    val i = l.indexOf(": ")
+    if (i > 0) l.substring(0, i).trim() to l.substring(i + 2).trim() else null
+}.toMap()

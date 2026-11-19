@@ -1,6 +1,6 @@
 {
   echo "arch: $(uname -m)"
-  for b in soffice libreoffice pandoc gs; do
+  for b in soffice libreoffice pandoc gs ocrmypdf; do
     p="$(command -v $b)"
     echo "$b: ${p:--}"
   done

@@ -37,6 +37,11 @@ Only core Material icons are used (material-icons-core); tool icons are emojis.
   send the `com.termux.RUN_COMMAND` intent (background) either to bash (env "base") or to `proot-distro login ubuntu --bind <job>:/qf -- bash /qf/run.sh`
   (env "ubuntu"), poll started.txt / done.txt through SAF, copy out/ back, delete the job folder. Needs permission com.termux.permission.RUN_COMMAND,
   `allow-external-apps=true` in Termux, and Termux storage access. Tools: docconv (LibreOffice --convert-to), pdf2docx (writer_pdf_import). Never claim this was tested.
+- Termux extras: assets/termux/{gs,ocr,pandoc,office}.sh with @PLACEHOLDERS@ (values only from Choice options, never free text);
+  `Office.script(c, asset, repl)` runs one. User scripts: `<exchange folder>/scripts/*.sh` with `# qf:name= emoji= desc= accept=(pdf,image,video,audio,office,any) multi= arg=Label|default`
+  become tools via `Custom` (refreshed at start and from Settings); the arg value is exported as $ARG. Old `job_*` folders (>6h) are cleaned automatically.
+- ErrLog.kt: local error log (filesDir/errors.log), exported from Settings via share sheet. Nothing is sent anywhere.
+- New non-Termux tools: vslides (ffmpeg scene detect -> frames -> Pdf.framesToPdf), atune (afftdn/silenceremove/atempo/dynaudnorm), pcrop, pbw, pextract.
 - ToolPreview.kt: `InlinePlayer` (VideoView) shown inside ToolScreen for video/audio tools; in the cut tool it can set start/end from the playback position.
 - History.kt: persisted recent results (SharedPreferences JSON, max 30 files / 1.5 GB, files live in filesDir/out/<stamp>), Home 'recent' section and HistoryScreen.
 - Options can be conditional: `Opt.showIf`. Compression tools share `targetOpts()` (mode level|target, mb, mbc) and `Ctx.isTarget()/targetMb()`;

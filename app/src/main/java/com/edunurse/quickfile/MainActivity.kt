@@ -23,7 +23,10 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 
 sealed class Screen(val depth: Int) {
     data object Home : Screen(0)
@@ -48,6 +51,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         Prefs.init(applicationContext)
         History.init(applicationContext)
+        ErrLog.init(applicationContext)
+        CoroutineScope(Dispatchers.Default).launch { Custom.refresh(applicationContext) }
         Jobs.cleanup(applicationContext)
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED

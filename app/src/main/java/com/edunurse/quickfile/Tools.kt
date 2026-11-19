@@ -111,6 +111,9 @@ private fun targetOpts(defMb: String): List<Opt> = listOf(
     Opt.Text("mbc", "الحجم بالـ MB", "مثال: 12.5", "", numeric = true, showIf = { it["mode"] == "target" && it["mb"] == "custom" })
 )
 
+/** كل الأدوات: الثابتة + اللي جاية من سكريبتات المستخدم */
+fun allTools(): List<Tool> = TOOLS + Custom.tools
+
 val TOOLS: List<Tool> = listOf(
     Tool("mpreview", "معاينة", "عرض خفيف للصور والصوت والفيديو", "▶️", Group.VIDEO, arrayOf("video/*", "audio/*", "image/*"), false, special = "preview"),
 
@@ -130,6 +133,12 @@ val TOOLS: List<Tool> = listOf(
             listOf(Opt.Choice("q", "الجودة", AQ, "mid", showIf = NOT_TARGET)),
         exec = { Media.toAudio(it) }),
 
+    Tool("vslides", "فيديو المحاضرة إلى شرائح PDF", "بيلقط الشرايح من الفيديو ويطلّع PDF", "🎬", Group.VIDEO, VID, true, opts = listOf(
+        Opt.Choice("mode", "الطريقة", listOf("scene" to "عند تغيّر الشريحة", "interval" to "كل فترة ثابتة"), "scene"),
+        Opt.Choice("sens", "الحساسية", listOf("low" to "قليلة", "mid" to "متوسطة", "high" to "عالية"), "mid", showIf = { it["mode"] == "scene" }),
+        Opt.Choice("every", "كل", listOf("5" to "5s", "10" to "10s", "20" to "20s", "30" to "30s", "60" to "1m"), "10", showIf = { it["mode"] == "interval" })
+    ), exec = { Media.slides(it) }),
+
     Tool("cut", "قص مقطع", "فيديو أو صوت، من وقت لوقت", "✂️", Group.VIDEO, MEDIA, false, opts = listOf(
         Opt.Text("start", "البداية", "00:00:10 أو 1:30", "0"),
         Opt.Text("end", "النهاية (اتركها فاضية للآخر)", "00:01:30"),
@@ -144,6 +153,15 @@ val TOOLS: List<Tool> = listOf(
         opts = listOf(Opt.Choice("fmt", "الصيغة", AFMT + ("voice" to "رسالة صوتية"), "mp3")) + targetOpts("5") +
             listOf(Opt.Choice("q", "الجودة", AQ, "mid", showIf = NOT_TARGET)),
         exec = { Media.toAudio(it) }),
+
+    Tool("atune", "تعديل الصوت", "تسريع، حذف الصمت، تقليل الضوضاء، توحيد الصوت", "🎚️", Group.AUDIO, MEDIA, true, compare = true, opts = listOf(
+        Opt.Choice("speed", "السرعة", listOf("1" to "1x", "1.25" to "1.25x", "1.5" to "1.5x", "1.75" to "1.75x", "2" to "2x", "2.5" to "2.5x", "3" to "3x"), "1"),
+        Opt.Toggle("silence", "احذف فترات الصمت", false),
+        Opt.Toggle("denoise", "قلّل الضوضاء", false),
+        Opt.Toggle("norm", "وحّد مستوى الصوت", false),
+        Opt.Choice("fmt", "الصيغة", AFMT, "mp3"),
+        Opt.Choice("q", "الجودة", AQ, "mid")
+    ), exec = { Media.tune(it) }),
 
     Tool("pmerge", "دمج PDF", "اجمع أكتر من ملف في ملف واحد", "📚", Group.PDF, PDFM, true, minFiles = 2, ordered = true,
         exec = { Pdf.merge(it) }),
@@ -190,6 +208,23 @@ val TOOLS: List<Tool> = listOf(
         Opt.Text("pw", "الباسورد (لو موجود)", "اتركه فاضي لو مفيش")
     ), exec = { Pdf.unlock(it) }),
 
+    Tool("pcrop", "قص هوامش PDF", "شيل هوامش الصفحات (بالمليمتر)", "📐", Group.PDF, PDFM, true, opts = listOf(
+        Opt.Text("top", "من فوق (مم)", "0", "0", numeric = true),
+        Opt.Text("bottom", "من تحت (مم)", "0", "0", numeric = true),
+        Opt.Text("left", "من الشمال (مم)", "0", "0", numeric = true),
+        Opt.Text("right", "من اليمين (مم)", "0", "0", numeric = true),
+        Opt.Text("pages", "الصفحات (فاضي = الكل)", "مثال: 1-3,7")
+    ), exec = { Pdf.crop(it) }),
+
+    Tool("pbw", "أبيض وأسود للطباعة", "حوّل الملف لتدرّج رمادي أو أبيض وأسود وبيوفّر حبر", "🖨️", Group.PDF, PDFM, true, compare = true, opts = listOf(
+        Opt.Choice("mode", "النمط", listOf("gray" to "رمادي", "bw" to "أبيض وأسود"), "gray"),
+        Opt.Choice("dpi", "الدقة", listOf("120" to "120", "150" to "150", "200" to "200"), "150")
+    ), exec = { Pdf.blackWhite(it) }),
+
+    Tool("pextract", "استخراج الصور من PDF", "طلّع الصور اللي جوه الملف", "🧲", Group.PDF, PDFM, true, opts = listOf(
+        Opt.Choice("fmt", "الصيغة", listOf("jpg" to "JPG", "png" to "PNG"), "jpg")
+    ), exec = { Pdf.extractImages(it) }),
+
     Tool("pimages", "PDF إلى صور", "كل صفحة صورة", "🖼️", Group.PDF, PDFM, false, opts = listOf(
         Opt.Choice("dpi", "الدقة", listOf("100" to "100", "150" to "150", "220" to "220"), "150"),
         Opt.Choice("fmt", "الصيغة", listOf("jpg" to "JPG", "png" to "PNG"), "jpg"),
@@ -213,6 +248,18 @@ val TOOLS: List<Tool> = listOf(
 
     Tool("pdf2docx", "PDF إلى Word (جودة محدودة)", "تحويل تقريبي عبر Termux، التنسيق مش مضمون", "📄", Group.TERMUX, PDFM, true, advanced = true,
         exec = { Office.convert(it, true) }),
+
+    Tool("gscompress", "ضغط PDF (Ghostscript)", "ضغط قوي عبر Termux", "🗜️", Group.TERMUX, PDFM, true, compare = true, advanced = true, opts = listOf(
+        Opt.Choice("q", "الجودة", listOf("screen" to "أصغر (72)", "ebook" to "متوازن (150)", "printer" to "عالية (300)"), "ebook")
+    ), exec = { Office.script(it, "gs.sh", mapOf("@Q@" to it.s("q"))) }),
+
+    Tool("ocrmypdf", "OCR (ocrmypdf)", "OCR أدق عبر Termux", "🔍", Group.TERMUX, PDFM, true, advanced = true, opts = listOf(
+        Opt.Choice("lang", "اللغة", listOf("ara+eng" to "عربي + إنجليزي", "eng" to "إنجليزي", "ara" to "عربي"), "ara+eng")
+    ), exec = { Office.script(it, "ocr.sh", mapOf("@LANG@" to it.s("lang"))) }),
+
+    Tool("pandoc", "تحويل نصوص (pandoc)", "Markdown / HTML / Word / ODT / EPUB عبر Termux", "📚", Group.TERMUX, arrayOf("*/*"), true, advanced = true, kinds = setOf("office", "other"), opts = listOf(
+        Opt.Choice("to", "التحويل إلى", listOf("docx" to "Word", "html" to "HTML", "md" to "Markdown", "epub" to "EPUB", "odt" to "ODT", "txt" to "نص"), "docx")
+    ), exec = { Office.script(it, "pandoc.sh", mapOf("@TO@" to it.s("to"))) }),
 
     Tool("ocr", "OCR: PDF قابل للبحث", "حوّل الممسوح لنص عربي/إنجليزي ويطلع PDF وTXT", "🔍", Group.OCR, PDF_IMG, true, opts = listOf(
         Opt.Choice("lang", "اللغة", listOf("ara+eng" to "عربي + إنجليزي", "eng" to "إنجليزي", "ara" to "عربي"), "ara+eng"),
